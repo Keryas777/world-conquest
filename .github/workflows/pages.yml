@@ -32,6 +32,7 @@ jobs:
         run: |
           mkdir -p _site
           cp data/generated/city-selection/viewer.html _site/index.html
+          cp data/generated/city-selection/quotas.html _site/quotas.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
