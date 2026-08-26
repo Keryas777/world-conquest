@@ -34,6 +34,13 @@ static class Viewer
                 }));
 
         var configPayload = configs.ToDictionary(c => c.Code, c => new { name = c.Name, quota = c.Quota });
+        var displayNames = new Dictionary<string, string>
+        {
+            ["FR"] = "France",
+            ["BE"] = "Belgique",
+            ["LU"] = "Luxembourg"
+        };
+        var quotaSummary = string.Join(" · ", configs.Select(c => $"{displayNames.GetValueOrDefault(c.Code, c.Name)} {c.Quota}"));
         var json = JsonSerializer.Serialize(payload);
         var metricsJson = JsonSerializer.Serialize(metrics);
         var configsJson = JsonSerializer.Serialize(configPayload);
@@ -77,7 +84,7 @@ static class Viewer
 <div class="app">
   <header>
     <h1>🌍 World Conquest — sélection des villes</h1>
-    <div class="sub">GeoNames ≥ 500 habitants · France 100 · Belgique 32 · Luxembourg 8</div>
+    <div class="sub">GeoNames ≥ 500 habitants · {{quotaSummary}}</div>
     <div class="controls" id="weights"></div>
   </header>
   <main>
