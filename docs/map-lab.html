@@ -1,47 +1,156 @@
 <!doctype html>
-<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <title>World Conquest — Map Lab</title>
 <style>
-*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0c1621;font-family:system-ui,-apple-system,sans-serif;color:#fff}
-#map{width:100%;height:100%;touch-action:none;display:block}.hud{position:fixed;z-index:5;left:12px;top:max(12px,env(safe-area-inset-top));background:#111c27dd;border:1px solid #ffffff25;border-radius:14px;padding:10px 12px;backdrop-filter:blur(8px);font-size:12px}
-.hud b{font-size:15px}.controls{position:fixed;z-index:6;right:12px;top:max(12px,env(safe-area-inset-top));display:flex;gap:6px}.controls button{border:1px solid #ffffff35;background:#111c27e8;color:#fff;border-radius:10px;padding:9px 11px;font-weight:700}
-.legend{position:fixed;z-index:5;left:12px;bottom:max(12px,env(safe-area-inset-bottom));background:#111c27dd;border-radius:12px;padding:8px 10px;font-size:11px;color:#dbe5ee}
-.country{stroke:#eaf1f4;stroke-width:.7;vector-effect:non-scaling-stroke}.city circle{stroke:#fff;stroke-width:1.5;vector-effect:non-scaling-stroke}.city text{fill:#fff;font-weight:750;paint-order:stroke;stroke:#17222c;stroke-width:3px;stroke-linejoin:round}.army{fill:none;stroke:#fff;stroke-width:2.2;stroke-dasharray:4 5;vector-effect:non-scaling-stroke;opacity:.92}.unit{fill:#fff;stroke:#17222c;stroke-width:1.2;vector-effect:non-scaling-stroke}
-</style></head><body>
-<svg id="map"></svg>
-<div class="hud"><b>WORLD CONQUEST · MAP LAB</b><br><span id="status">Europe occidentale · 50m</span></div>
-<div class="controls"><button id="reset">Recentrer</button><button id="units">Unités ✓</button></div>
-<div class="legend">Fond vectoriel simplifié · villes + mouvements = couches séparées</div>
-<script src="https://cdn.jsdelivr.net/npm/d3@7"></script><script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
-<script>
-const svg=d3.select("#map"), W=innerWidth,H=innerHeight;
-svg.attr("viewBox",[0,0,W,H]);
-const ocean=svg.append("rect").attr("width",W).attr("height",H).attr("fill","#8db8c8");
-const root=svg.append("g");
-const palette=["#d7d9d6","#d7d9d6","#d7d9d6"];
-const owners={"250":"#557fba","276":"#d88b6d","380":"#70a77c","724":"#d6a657","826":"#9b78b4","056":"#d79bb1","528":"#74a9a5","756":"#bdafa1","620":"#c88d69"};
-const cities=[
-["Paris",2.3522,48.8566,126],["Lyon",4.8357,45.764,83],["Marseille",5.3698,43.2965,59],["Bordeaux",-0.5792,44.8378,41],["Lille",3.0573,50.6292,37],
-["Londres",-0.1276,51.5072,94],["Bruxelles",4.3517,50.8503,51],["Amsterdam",4.9041,52.3676,46],["Berlin",13.405,52.52,108],["Munich",11.582,48.1351,67],
-["Milan",9.19,45.4642,72],["Rome",12.4964,41.9028,79],["Madrid",-3.7038,40.4168,88],["Barcelone",2.1734,41.3851,61],["Genève",6.1432,46.2044,29]
-];
-const routes=[["Lyon","Bruxelles",42],["Munich","Paris",31],["Marseille","Rome",26]];
-let showUnits=true;
-const projection=d3.geoMercator().center([5.5,47]).scale(Math.min(W,H)*3.05).translate([W/2,H/2]);
-const path=d3.geoPath(projection);
-function drawCities(){
- const layer=root.append("g").attr("class","gameplay");
- const by=Object.fromEntries(cities.map(c=>[c[0],c]));
- routes.forEach((r,i)=>{const a=projection([by[r[0]][1],by[r[0]][2]]),b=projection([by[r[1]][1],by[r[1]][2]]);layer.append("path").attr("class","army").attr("d",`M${a[0]},${a[1]} Q${(a[0]+b[0])/2},${(a[1]+b[1])/2-35} ${b[0]},${b[1]}`);const p=[a[0]+(b[0]-a[0])*.55,a[1]+(b[1]-a[1])*.55-18];layer.append("circle").attr("class","unit").attr("cx",p[0]).attr("cy",p[1]).attr("r",5);layer.append("text").attr("x",p[0]+8).attr("y",p[1]+4).attr("fill","#fff").attr("font-size",11).attr("font-weight",800).text(r[2]+"k")});
- const c=layer.selectAll(".city").data(cities).enter().append("g").attr("class","city").attr("transform",d=>`translate(${projection([d[1],d[2]])})`);
- c.append("circle").attr("r",d=>d[3]>80?6:5).attr("fill","#182532");c.append("text").attr("x",8).attr("y",-2).attr("font-size",12).text(d=>d[0]);c.append("text").attr("x",8).attr("y",10).attr("font-size",9).text(d=>d[3]+"k");
+:root{
+  --ocean:#8fb6c4;--neutral:#c8cdca;--border:#eef4f6;--panel:#101b26e8;--text:#fff;
+  --fr:#587fb5;--de:#d98a6e;--it:#73a27f;--es:#d1a356;--uk:#9a78b2;--be:#d49ab1;--nl:#74a6a1;--ch:#b9ab9d;--pt:#c18a68;
 }
-fetch("https://cdn.jsdelivr.net/npm/world-atlas@2/countries-50m.json").then(r=>r.json()).then(world=>{
- const features=topojson.feature(world,world.objects.countries).features;
- root.selectAll("path.country").data(features).enter().append("path").attr("class","country").attr("fill",d=>owners[String(d.id).padStart(3,"0")]||"#c8cdca").attr("d",path);
- drawCities();
- svg.call(d3.zoom().scaleExtent([.7,12]).on("zoom",e=>root.attr("transform",e.transform)));
-}).catch(e=>document.querySelector("#status").textContent="Erreur de chargement de la géométrie");
-document.querySelector("#reset").onclick=()=>svg.transition().duration(350).call(d3.zoom().transform,d3.zoomIdentity);
-document.querySelector("#units").onclick=e=>{showUnits=!showUnits;document.querySelector(".gameplay").style.display=showUnits?"":"none";e.target.textContent="Unités "+(showUnits?"✓":"✕")};
-</script></body></html>
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1520;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text)}
+#map{width:100%;height:100%;display:block;touch-action:none;background:var(--ocean)}
+.country{fill:var(--neutral);stroke:var(--border);stroke-width:.75;vector-effect:non-scaling-stroke}
+.city circle{stroke:#fff;stroke-width:1.4;vector-effect:non-scaling-stroke}
+.city text{fill:#fff;font-weight:750;paint-order:stroke;stroke:#16212b;stroke-width:3px;stroke-linejoin:round}
+.army-route{fill:none;stroke:#fff;stroke-width:2.2;stroke-dasharray:4 5;vector-effect:non-scaling-stroke;opacity:.92}
+.army-dot{fill:#fff;stroke:#17222c;stroke-width:1.2;vector-effect:non-scaling-stroke}
+.army-label{fill:#fff;font-size:11px;font-weight:850;paint-order:stroke;stroke:#17222c;stroke-width:3px}
+.panel{position:fixed;z-index:10;background:var(--panel);border:1px solid #ffffff26;border-radius:14px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.header{left:12px;right:12px;top:max(10px,env(safe-area-inset-top));padding:10px 12px}
+.title{font-weight:900;font-size:15px;letter-spacing:.2px}.sub{font-size:11px;color:#c9d6df;margin-top:2px}
+.toolbar{left:12px;right:12px;bottom:max(10px,env(safe-area-inset-bottom));padding:8px;display:grid;gap:7px}
+.row{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}.row::-webkit-scrollbar{display:none}
+button{border:1px solid #ffffff28;background:#1b2936;color:#eef5f8;border-radius:10px;padding:8px 10px;font-weight:800;font-size:12px;white-space:nowrap}
+button.active{background:#fff;color:#17222c;border-color:#fff}
+#loading{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:20;background:#0b152088;font-weight:800}
+.badge{margin-left:auto;font-size:10px;color:#b8c7d2;padding:7px 2px}
+.style-state{--ocean:#d9e0e3;--neutral:#bfc2c3;--border:#fff}
+.style-dark{--ocean:#172536;--neutral:#394858;--border:#8fa0ad;--panel:#07111be8}
+.style-dark .city text,.style-dark .army-label{stroke:#0b141d}
+.style-pastel{--ocean:#a9ccd4;--neutral:#d8d8d1;--border:#f7f7f3}
+@media (min-width:800px){.header{left:18px;right:auto;min-width:340px}.toolbar{left:18px;right:auto;width:auto;min-width:520px}}
+</style>
+</head>
+<body class="style-state">
+<svg id="map"></svg>
+<div class="panel header">
+  <div class="title">WORLD CONQUEST · MAP LAB</div>
+  <div class="sub" id="status">Europe occidentale · 50m · State-like</div>
+</div>
+<div class="panel toolbar">
+  <div class="row" id="lods">
+    <button data-lod="110">110m</button>
+    <button data-lod="50" class="active">50m</button>
+    <button data-lod="10">10m</button>
+    <span class="badge">niveau de détail</span>
+  </div>
+  <div class="row" id="styles">
+    <button data-style="state" class="active">State-like</button>
+    <button data-style="pastel">Pastel</button>
+    <button data-style="dark">Dark</button>
+    <span class="badge">style</span>
+  </div>
+  <div class="row">
+    <button id="toggleGameplay" class="active">Unités ✓</button>
+    <button id="toggleLabels" class="active">Labels ✓</button>
+    <button id="reset">Recentrer</button>
+  </div>
+</div>
+<div id="loading">Chargement de la carte…</div>
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
+<script>
+const svg=d3.select("#map");
+const root=svg.append("g");
+const mapLayer=root.append("g").attr("class","map-layer");
+const gameplayLayer=root.append("g").attr("class","gameplay-layer");
+const countryColors={
+  "250":"var(--fr)","276":"var(--de)","380":"var(--it)","724":"var(--es)","826":"var(--uk)",
+  "056":"var(--be)","528":"var(--nl)","756":"var(--ch)","620":"var(--pt)"
+};
+const cities=[
+  ["Paris",2.3522,48.8566,126],["Lyon",4.8357,45.764,83],["Marseille",5.3698,43.2965,59],["Bordeaux",-0.5792,44.8378,41],["Lille",3.0573,50.6292,37],
+  ["Londres",-0.1276,51.5072,94],["Bruxelles",4.3517,50.8503,51],["Amsterdam",4.9041,52.3676,46],["Berlin",13.405,52.52,108],["Munich",11.582,48.1351,67],
+  ["Milan",9.19,45.4642,72],["Rome",12.4964,41.9028,79],["Madrid",-3.7038,40.4168,88],["Barcelone",2.1734,41.3851,61],["Genève",6.1432,46.2044,29]
+];
+const routes=[["Lyon","Bruxelles",42,.55],["Munich","Paris",31,.38],["Marseille","Rome",26,.66]];
+let W,H,projection,path,currentLod="50",currentStyle="state",showGameplay=true,showLabels=true;
+let worldCache={};
+const zoom=d3.zoom().scaleExtent([.75,14]).on("zoom",e=>root.attr("transform",e.transform));
+svg.call(zoom);
+
+function resize(){
+  W=innerWidth;H=innerHeight;
+  svg.attr("viewBox",[0,0,W,H]);
+  projection=d3.geoMercator().center([5.5,47]).scale(Math.min(W,H)*3.05).translate([W/2,H/2]);
+  path=d3.geoPath(projection);
+  redraw();
+}
+function setLoading(on){document.querySelector("#loading").style.display=on?"flex":"none"}
+function updateStatus(){document.querySelector("#status").textContent="Europe occidentale · "+currentLod+"m · "+({"state":"State-like","pastel":"Pastel","dark":"Dark"})[currentStyle]}
+function redraw(){
+  if(!worldCache[currentLod]||!path)return;
+  const features=topojson.feature(worldCache[currentLod],worldCache[currentLod].objects.countries).features;
+  const c=mapLayer.selectAll("path.country").data(features,d=>d.id);
+  c.join("path").attr("class","country").attr("fill",d=>countryColors[String(d.id).padStart(3,"0")]||"var(--neutral)").attr("d",path);
+  drawGameplay();
+}
+function drawGameplay(){
+  gameplayLayer.selectAll("*").remove();
+  const by=Object.fromEntries(cities.map(c=>[c[0],c]));
+  routes.forEach(r=>{
+    const a=projection([by[r[0]][1],by[r[0]][2]]),b=projection([by[r[1]][1],by[r[1]][2]]);
+    const mx=(a[0]+b[0])/2,my=(a[1]+b[1])/2-34;
+    gameplayLayer.append("path").attr("class","army-route").attr("d",`M${a[0]},${a[1]} Q${mx},${my} ${b[0]},${b[1]}`);
+    const t=r[3],u=1-t,px=u*u*a[0]+2*u*t*mx+t*t*b[0],py=u*u*a[1]+2*u*t*my+t*t*b[1];
+    gameplayLayer.append("circle").attr("class","army-dot").attr("cx",px).attr("cy",py).attr("r",5.5);
+    gameplayLayer.append("text").attr("class","army-label").attr("x",px+9).attr("y",py+4).text(r[2]+"k");
+  });
+  const c=gameplayLayer.selectAll("g.city").data(cities).enter().append("g").attr("class","city").attr("transform",d=>`translate(${projection([d[1],d[2]])})`);
+  c.append("circle").attr("r",d=>d[3]>=80?6:4.8).attr("fill","#192631");
+  c.append("text").attr("class","city-name").attr("x",8).attr("y",-2).attr("font-size",12).text(d=>d[0]);
+  c.append("text").attr("class","city-value").attr("x",8).attr("y",10).attr("font-size",9).text(d=>d[3]+"k");
+  gameplayLayer.style("display",showGameplay?null:"none");
+  gameplayLayer.selectAll(".city text").style("display",showLabels?null:"none");
+}
+async function loadLod(lod){
+  currentLod=lod;updateStatus();
+  document.querySelectorAll("[data-lod]").forEach(b=>b.classList.toggle("active",b.dataset.lod===lod));
+  if(!worldCache[lod]){
+    setLoading(true);
+    try{
+      const r=await fetch("https://cdn.jsdelivr.net/npm/world-atlas@2/countries-"+lod+"m.json");
+      if(!r.ok)throw new Error("HTTP "+r.status);
+      worldCache[lod]=await r.json();
+    }catch(e){
+      document.querySelector("#status").textContent="Erreur de chargement du niveau "+lod+"m";
+      setLoading(false);return;
+    }
+    setLoading(false);
+  }
+  redraw();
+}
+document.querySelectorAll("[data-lod]").forEach(b=>b.onclick=()=>loadLod(b.dataset.lod));
+document.querySelectorAll("[data-style]").forEach(b=>b.onclick=()=>{
+  currentStyle=b.dataset.style;
+  document.body.className="style-"+currentStyle;
+  document.querySelectorAll("[data-style]").forEach(x=>x.classList.toggle("active",x===b));
+  updateStatus();
+});
+document.querySelector("#toggleGameplay").onclick=e=>{
+  showGameplay=!showGameplay;e.target.classList.toggle("active",showGameplay);e.target.textContent="Unités "+(showGameplay?"✓":"✕");
+  gameplayLayer.style("display",showGameplay?null:"none");
+};
+document.querySelector("#toggleLabels").onclick=e=>{
+  showLabels=!showLabels;e.target.classList.toggle("active",showLabels);e.target.textContent="Labels "+(showLabels?"✓":"✕");
+  gameplayLayer.selectAll(".city text").style("display",showLabels?null:"none");
+};
+document.querySelector("#reset").onclick=()=>svg.transition().duration(300).call(zoom.transform,d3.zoomIdentity);
+addEventListener("resize",resize);
+resize();loadLod("50");
+</script>
+</body>
+</html>
