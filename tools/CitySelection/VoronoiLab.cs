@@ -163,10 +163,26 @@ for(const c of cells){
 }
 function applyZoomStyle(){
   const z=map.getZoom();
-  const radius=z<=5?5:z===6?6.5:z===7?8:z===8?9.5:11;
-  const cellWeight=z<=5?.8:z===6?1:z===7?1.25:1.5;
-  const cellOpacity=z<=5?.72:z===6?.80:z===7?.88:.95;
-  const fillOpacity=z<=5?.12:z===6?.14:z===7?.16:.18;
+  const radius =
+    z<=5 ? 5 :
+    z===6 ? 7 :
+    z===7 ? 10 :
+    z===8 ? 14 :
+    z===9 ? 18 :
+    z===10 ? 23 :
+    z===11 ? 28 :
+    z===12 ? 34 : 40;
+  const cellWeight =
+    z<=5 ? .8 :
+    z===6 ? 1 :
+    z===7 ? 1.3 :
+    z===8 ? 1.7 :
+    z===9 ? 2.2 :
+    z===10 ? 2.8 :
+    z===11 ? 3.5 :
+    z===12 ? 4.2 : 5;
+  const cellOpacity = z<=5?.72:z===6?.80:z===7?.86:z===8?.90:z===9?.93:.96;
+  const fillOpacity = z<=5?.12:z===6?.14:z===7?.16:z===8?.18:z===9?.20:z===10?.22:z===11?.24:z===12?.26:.28;
   for(const marker of cityLayers) marker.setRadius(radius);
   for(const layer of cellLayers) layer.setStyle({weight:cellWeight,opacity:cellOpacity,fillOpacity});
 }
