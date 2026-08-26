@@ -84,7 +84,8 @@ static class Program
         Viewer.WriteHtml(Path.Combine(outDir, "viewer.html"), snapshots, configs);
         await QuotaLab.GenerateAsync(http, outDir);
         await PopulationThresholdLab.GenerateAsync(http, outDir);
-        await FrontierGraphLab.GenerateAsync(http, outDir, candidates, .60);\n        await VoronoiLab.GenerateAsync(http, outDir, candidates, .60);
+        await FrontierGraphLab.GenerateAsync(http, outDir, candidates, .60);
+        await VoronoiLab.GenerateAsync(http, outDir, candidates, .60);
         Console.WriteLine($"Outputs written to {outDir}");
     }
 }
