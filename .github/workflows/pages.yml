@@ -3,7 +3,7 @@ name: Publish city-selection viewer
 on:
   push:
     branches:
-      - dev/city-selection-lab
+      - main
     paths:
       - 'tools/CitySelection/**'
       - '.github/workflows/pages.yml'
