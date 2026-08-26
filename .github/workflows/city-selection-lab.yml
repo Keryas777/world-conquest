@@ -13,6 +13,9 @@ on:
       - '.github/workflows/city-selection-lab.yml'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   run-lab:
     runs-on: ubuntu-latest
@@ -24,10 +27,24 @@ jobs:
           dotnet-version: '8.0.x'
       - name: Build
         run: dotnet build tools/CitySelection/CitySelection.csproj --configuration Release
-      - name: Run France/Belgium/Luxembourg experiment
+      - name: Run city-selection experiments
         run: dotnet run --project tools/CitySelection/CitySelection.csproj --configuration Release
       - name: Show report
         run: cat data/generated/city-selection/report.md
+      - name: Publish generated frontier viewer to docs
+        if: github.event_name != 'pull_request'
+        run: |
+          cp data/generated/city-selection/frontiers.html docs/frontiers.html
+          cp data/generated/city-selection/frontier-graph.json docs/frontier-graph.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/frontiers.html docs/frontier-graph.json
+          if git diff --cached --quiet; then
+            echo "No generated viewer changes to publish."
+          else
+            git commit -m "Update generated frontier viewer"
+            git push
+          fi
       - name: Upload generated selections
         uses: actions/upload-artifact@v4
         with:
