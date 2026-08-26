@@ -137,14 +137,17 @@ for(const e of edges){neighbors.get(e.a).push({...e,other:e.b});neighbors.get(e.
 const map=L.map('map').setView([48,5],5);
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:13,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
 
+const cellLayers=[];
 for(const c of cells){
-  L.polygon(c.polygon,{color:'#94a3b8',weight:.8,opacity:.72,fillColor:colors[c.country]||'#aaa',fillOpacity:.12,interactive:false}).addTo(map);
+  const layer=L.polygon(c.polygon,{color:'#94a3b8',weight:.8,opacity:.72,fillColor:colors[c.country]||'#aaa',fillOpacity:.12,interactive:false}).addTo(map);
+  cellLayers.push(layer);
 }
 const highlight=L.layerGroup().addTo(map);
+const cityLayers=[];
 for(const c of cells){
   const list=neighbors.get(c.id)||[];
   const foreign=list.filter(e=>e.foreign);
-  L.circleMarker([c.lat,c.lon],{radius:5,color:'#fff',weight:1,fillColor:colors[c.country]||'#aaa',fillOpacity:.95})
+  const marker=L.circleMarker([c.lat,c.lon],{radius:5,color:'#fff',weight:1,fillColor:colors[c.country]||'#aaa',fillOpacity:.95})
    .bindPopup(()=>{
       const rows=list.slice().sort((a,b)=>a.km-b.km).map(e=>{const o=byId.get(e.other);return '<span style="color:'+(e.foreign?'#ffcf5a':'#cbd5e1')+'">'+o.name+' ('+o.country+') — '+e.km+' km</span>';}).join('<br>');
       return '<b>'+c.name+'</b> ('+c.country+')<br>'+Number(c.population).toLocaleString('fr-FR')+' hab.<br><b>'+list.length+'</b> voisin(s) direct(s), <b>'+foreign.length+'</b> étranger(s)<br>'+rows;
@@ -156,8 +159,20 @@ for(const c of cells){
         L.polyline([[c.lat,c.lon],[o.lat,o.lon]],{color:e.foreign?'#ffcf5a':'#9ca3af',weight:e.foreign?3:2,opacity:.95}).addTo(highlight);
       }
    }).addTo(map);
+  cityLayers.push(marker);
 }
+function applyZoomStyle(){
+  const z=map.getZoom();
+  const radius=z<=5?5:z===6?6.5:z===7?8:z===8?9.5:11;
+  const cellWeight=z<=5?.8:z===6?1:z===7?1.25:1.5;
+  const cellOpacity=z<=5?.72:z===6?.80:z===7?.88:.95;
+  const fillOpacity=z<=5?.12:z===6?.14:z===7?.16:.18;
+  for(const marker of cityLayers) marker.setRadius(radius);
+  for(const layer of cellLayers) layer.setStyle({weight:cellWeight,opacity:cellOpacity,fillOpacity});
+}
+map.on('zoomend',applyZoomStyle);
 map.fitBounds(cells.map(c=>[c.lat,c.lon]),{padding:[20,20]});
+applyZoomStyle();
 </script></body></html>
 """;
 
