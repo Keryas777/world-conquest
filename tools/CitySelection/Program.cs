@@ -67,7 +67,8 @@ static class Program
 {
     public static async Task Main()
     {
-        var configs = new[] { new CountryConfig("FR", "France", 100), new CountryConfig("BE", "Belgium", 32), new CountryConfig("LU", "Luxembourg", 8) }; var weights = new[] { .30, .50, .60, .70, 1.00 }; const long minPopulation = 500;
+        // Recalibrated gameplay density test: France 85, Belgium 18, Luxembourg 3.
+        var configs = new[] { new CountryConfig("FR", "France", 85), new CountryConfig("BE", "Belgium", 18), new CountryConfig("LU", "Luxembourg", 3) }; var weights = new[] { .30, .50, .60, .70, 1.00 }; const long minPopulation = 500;
         var cacheDir = Path.Combine("data", "raw", "geonames"); var outDir = Path.Combine("data", "generated", "city-selection"); Directory.CreateDirectory(cacheDir); Directory.CreateDirectory(outDir);
         using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) }; http.DefaultRequestHeaders.UserAgent.ParseAdd("world-conquest-city-selection-lab/0.1"); var candidates = new Dictionary<string, List<City>>();
         foreach (var cfg in configs)
