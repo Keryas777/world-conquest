@@ -3,7 +3,7 @@ name: City selection lab
 on:
   push:
     branches:
-      - dev/city-selection-lab
+      - main
   pull_request:
     paths:
       - 'tools/CitySelection/**'
