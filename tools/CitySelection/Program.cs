@@ -81,7 +81,10 @@ static class Program
         using var report = new StreamWriter(Path.Combine(outDir, "report.md")); report.WriteLine("# City-selection laboratory\n"); report.WriteLine($"GeoNames populated places (`feature class P`), minimum population {minPopulation:N0}.\n"); report.WriteLine("| Population weight | Country | Selected | Mean nearest-neighbor km | Min km | Max km |\n|---:|---|---:|---:|---:|---:|");
         var snapshots = new Dictionary<int, IReadOnlyDictionary<string, List<City>>>();
         foreach (var weight in weights) { var groups = new Dictionary<string, List<City>>(); foreach (var cfg in configs) { var selected = Selector.Select(candidates[cfg.Code], cfg.Quota, weight); groups[cfg.Code] = selected; var s = Results.NearestStats(selected); report.WriteLine($"| {weight:P0} | {cfg.Name} | {selected.Count} | {s.Mean:F1} | {s.Min:F1} | {s.Max:F1} |"); } var weightPercent = (int)Math.Round(weight * 100); var label = weightPercent.ToString("D3"); snapshots[weightPercent] = groups; Results.WriteCsv(Path.Combine(outDir, $"selected-pop-{label}.csv"), groups.Values.SelectMany(x => x)); Results.WriteSvg(Path.Combine(outDir, $"selected-pop-{label}.svg"), groups, weight); }
-        Viewer.WriteHtml(Path.Combine(outDir, "viewer.html"), snapshots, configs); await QuotaLab.GenerateAsync(http, outDir); await PopulationThresholdLab.GenerateAsync(http, outDir);
+        Viewer.WriteHtml(Path.Combine(outDir, "viewer.html"), snapshots, configs);
+        await QuotaLab.GenerateAsync(http, outDir);
+        await PopulationThresholdLab.GenerateAsync(http, outDir);
+        await FrontierGraphLab.GenerateAsync(http, outDir, candidates, .60);
         Console.WriteLine($"Outputs written to {outDir}");
     }
 }
