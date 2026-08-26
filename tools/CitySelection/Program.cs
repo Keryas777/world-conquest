@@ -182,7 +182,9 @@ static class Program
         }
 
         Viewer.WriteHtml(Path.Combine(outDir, "viewer.html"), snapshots, configs);
+        await QuotaLab.GenerateAsync(http, outDir);
         Console.WriteLine($"Interactive viewer written to {Path.Combine(outDir, "viewer.html")}");
+        Console.WriteLine($"Quota comparison written to {Path.Combine(outDir, "quotas.html")}");
         Console.WriteLine($"Outputs written to {outDir}");
     }
 }
