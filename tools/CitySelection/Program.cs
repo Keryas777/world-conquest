@@ -115,7 +115,7 @@ static class Program
             new CountryConfig("BE", "Belgium", 32),
             new CountryConfig("LU", "Luxembourg", 8)
         };
-        var weights = new[] { .30, .50, .70, 1.00 };
+        var weights = new[] { .30, .50, .60, .70, 1.00 };
         const long minPopulation = 500;
         var cacheDir = Path.Combine("data", "raw", "geonames");
         var outDir = Path.Combine("data", "generated", "city-selection");
@@ -162,6 +162,7 @@ static class Program
         report.WriteLine("| Population weight | Country | Selected | Mean nearest-neighbor km | Min km | Max km |");
         report.WriteLine("|---:|---|---:|---:|---:|---:|");
 
+        var snapshots = new Dictionary<int, IReadOnlyDictionary<string, List<City>>>();
         foreach (var weight in weights)
         {
             var groups = new Dictionary<string, List<City>>();
@@ -173,10 +174,15 @@ static class Program
                 report.WriteLine($"| {weight:P0} | {cfg.Name} | {selected.Count} | {s.Mean:F1} | {s.Min:F1} | {s.Max:F1} |");
                 Console.WriteLine($"weight={weight:P0} {cfg.Name}: {selected.Count} cities; nearest mean={s.Mean:F1} km min={s.Min:F1} max={s.Max:F1}");
             }
-            var label = ((int)Math.Round(weight * 100)).ToString("D3");
+            var weightPercent = (int)Math.Round(weight * 100);
+            var label = weightPercent.ToString("D3");
+            snapshots[weightPercent] = groups;
             Results.WriteCsv(Path.Combine(outDir, $"selected-pop-{label}.csv"), groups.Values.SelectMany(x => x));
             Results.WriteSvg(Path.Combine(outDir, $"selected-pop-{label}.svg"), groups, weight);
         }
+
+        Viewer.WriteHtml(Path.Combine(outDir, "viewer.html"), snapshots, configs);
+        Console.WriteLine($"Interactive viewer written to {Path.Combine(outDir, "viewer.html")}");
         Console.WriteLine($"Outputs written to {outDir}");
     }
 }
