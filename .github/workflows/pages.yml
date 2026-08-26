@@ -34,6 +34,8 @@ jobs:
           cp data/generated/city-selection/viewer.html _site/index.html
           cp data/generated/city-selection/quotas.html _site/quotas.html
           cp data/generated/city-selection/population-thresholds.html _site/population-thresholds.html
+          cp data/generated/city-selection/frontiers.html _site/frontiers.html
+          cp data/generated/city-selection/frontier-graph.json _site/frontier-graph.json
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
