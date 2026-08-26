@@ -1,0 +1,33 @@
+name: City selection lab
+
+on:
+  push:
+    branches:
+      - dev/city-selection-lab
+  pull_request:
+    paths:
+      - 'tools/CitySelection/**'
+      - '.github/workflows/city-selection-lab.yml'
+  workflow_dispatch:
+
+jobs:
+  run-lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build
+        run: dotnet build tools/CitySelection/CitySelection.csproj --configuration Release
+      - name: Run France/Belgium/Luxembourg experiment
+        run: dotnet run --project tools/CitySelection/CitySelection.csproj --configuration Release
+      - name: Show report
+        run: cat data/generated/city-selection/report.md
+      - name: Upload generated selections
+        uses: actions/upload-artifact@v4
+        with:
+          name: city-selection-results
+          path: data/generated/city-selection/
+          if-no-files-found: error
