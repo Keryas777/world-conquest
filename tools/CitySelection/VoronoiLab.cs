@@ -1,10 +1,15 @@
 using System.Globalization;
 using System.IO.Compression;
 using System.Text.Json;
+using NetTopologySuite.Geometries;
+using NetTopologySuite.Operation.Union;
 
 static class VoronoiLab
 {
     sealed record Pt(double X, double Y);
+
+    static readonly GeometryFactory GeometryFactory =
+        NetTopologySuite.NtsGeometryServices.Instance.CreateGeometryFactory(srid: 4326);
 
     public static async Task GenerateAsync(
         HttpClient http,
@@ -44,7 +49,7 @@ static class VoronoiLab
         minX -= padX; maxX += padX; minY -= padY; maxY += padY;
 
         var cells = new List<List<Pt>>(cities.Count);
-        var adjacency = new HashSet<(int A, int B)>();
+        var rawAdjacency = new HashSet<(int A, int B)>();
 
         for (var i = 0; i < pts.Count; i++)
         {
@@ -82,11 +87,57 @@ static class VoronoiLab
                     var len = Math.Sqrt(Math.Pow(p.X - q.X, 2) + Math.Pow(p.Y - q.Y, 2));
                     if (dp <= tol && dq <= tol && len > 1e-6)
                     {
-                        adjacency.Add((Math.Min(i, j), Math.Max(i, j)));
+                        rawAdjacency.Add((Math.Min(i, j), Math.Max(i, j)));
                         break;
                     }
                 }
             }
+        }
+
+        // The lab only contains seven countries. We use their dissolved Natural Earth
+        // polygons as a study-area land mask: internal historical borders disappear,
+        // coastlines/islands remain, and cells cannot flood the sea or unmodelled countries.
+        var studyArea = await LoadStudyAreaAsync(http, quotas.Keys);
+
+        var clippedCells = new List<Geometry>(cities.Count);
+        for (var i = 0; i < cells.Count; i++)
+        {
+            var rawCell = ToPolygon(cells[i], cosLat);
+            Geometry clipped;
+            try
+            {
+                clipped = rawCell.Intersection(studyArea);
+            }
+            catch
+            {
+                // Defensive cleanup for the rare invalid overlay.
+                clipped = rawCell.Buffer(0).Intersection(studyArea.Buffer(0));
+            }
+
+            clippedCells.Add(clipped);
+        }
+
+        // A raw Voronoi adjacency only remains a terrestrial adjacency if the two
+        // land-clipped cells still share a segment. Water-only contacts disappear.
+        var adjacency = new HashSet<(int A, int B)>();
+        foreach (var pair in rawAdjacency)
+        {
+            var a = clippedCells[pair.A];
+            var b = clippedCells[pair.B];
+            if (a.IsEmpty || b.IsEmpty) continue;
+
+            Geometry shared;
+            try
+            {
+                shared = a.Boundary.Intersection(b.Boundary);
+            }
+            catch
+            {
+                shared = a.Buffer(0).Boundary.Intersection(b.Buffer(0).Boundary);
+            }
+
+            if (!shared.IsEmpty && shared.Length > 1e-6)
+                adjacency.Add(pair);
         }
 
         var cellPayload = cities.Select((city, i) => new
@@ -97,7 +148,7 @@ static class VoronoiLab
             lat = city.Lat,
             lon = city.Lon,
             population = city.Population,
-            polygon = cells[i].Select(p => new[] { p.Y, p.X / cosLat })
+            geometry = GeometryToGeoJson(clippedCells[i])
         }).ToList();
 
         var edgePayload = adjacency
@@ -125,9 +176,9 @@ html,body,#map{height:100%;margin:0}body{font-family:-apple-system,BlinkMacSyste
 .leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#111b31;color:#eef3ff}
 </style></head><body>
 <div id="map"></div>
-<div class="top"><b>🕸️ Voronoï — maillage implicite des villes</b><div class="muted">{{quotaText}} · 60/40 · Voronoï brut · masque terrestre temporairement désactivé</div></div>
-<div class="legend">Clique une ville : ses voisins directs apparaissent.<br><span style="color:#ffcf5a">— voisin étranger</span> · <span style="color:#9ca3af">— voisin interne</span></div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>\n<script src="https://cdn.jsdelivr.net/npm/@turf/turf@7/turf.min.js"></script>
+<div class="top"><b>🕸️ Voronoï — maillage implicite des villes</b><div class="muted">{{quotaText}} · 60/40 · cellules découpées aux terres · Natural Earth 50m</div></div>
+<div class="legend">Clique une ville : ses voisins terrestres apparaissent.<br><span style="color:#ffcf5a">— voisin étranger</span> · <span style="color:#9ca3af">— voisin interne</span></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 const cells={{jsonCells}}, edges={{jsonEdges}};
 const colors={FR:'#3178ff',BE:'#ff9d19',LU:'#ef3d5c',DE:'#8b5cf6',CH:'#f43f5e',IT:'#22c55e',ES:'#facc15'};
@@ -139,11 +190,11 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:13,attribu
 
 const cellLayers=[];
 for(const c of cells){
-  const layer=L.polygon(c.polygon,{
+  if(!c.geometry) continue;
+  const layer=L.geoJSON(c.geometry,{style:{
     color:'#94a3b8',weight:.8,opacity:.72,
-    fillColor:colors[c.country]||'#aaa',fillOpacity:.12,
-    interactive:false
-  }).addTo(map);
+    fillColor:colors[c.country]||'#aaa',fillOpacity:.12
+  },interactive:false}).addTo(map);
   cellLayers.push(layer);
 }
 const highlight=L.layerGroup().addTo(map);
@@ -154,7 +205,7 @@ for(const c of cells){
   const marker=L.circleMarker([c.lat,c.lon],{radius:5,color:'#fff',weight:1,fillColor:colors[c.country]||'#aaa',fillOpacity:.95})
    .bindPopup(()=>{
       const rows=list.slice().sort((a,b)=>a.km-b.km).map(e=>{const o=byId.get(e.other);return '<span style="color:'+(e.foreign?'#ffcf5a':'#cbd5e1')+'">'+o.name+' ('+o.country+') — '+e.km+' km</span>';}).join('<br>');
-      return '<b>'+c.name+'</b> ('+c.country+')<br>'+Number(c.population).toLocaleString('fr-FR')+' hab.<br><b>'+list.length+'</b> voisin(s) direct(s), <b>'+foreign.length+'</b> étranger(s)<br>'+rows;
+      return '<b>'+c.name+'</b> ('+c.country+')<br>'+Number(c.population).toLocaleString('fr-FR')+' hab.<br><b>'+list.length+'</b> voisin(s) terrestre(s), <b>'+foreign.length+'</b> étranger(s)<br>'+rows;
    })
    .on('click',()=>{
       highlight.clearLayers();
@@ -201,11 +252,180 @@ applyZoomStyle();
         await File.WriteAllTextAsync(
             Path.Combine(outDir, "voronoi-graph.json"),
             JsonSerializer.Serialize(
-                new { populationWeight, quotas, referenceLat = referenceLat * 180.0 / Math.PI, cells = cellPayload, edges = edgePayload },
+                new
+                {
+                    populationWeight,
+                    quotas,
+                    referenceLat = referenceLat * 180.0 / Math.PI,
+                    mask = "Natural Earth 1:50m dissolved study area",
+                    rawAdjacencyCount = rawAdjacency.Count,
+                    terrestrialAdjacencyCount = adjacency.Count,
+                    cells = cellPayload,
+                    edges = edgePayload
+                },
                 new JsonSerializerOptions { WriteIndented = true }));
 
         var foreignEdges = edgePayload.Count(e => e.foreign);
-        Console.WriteLine($"Voronoi lab: {cities.Count} cells, {edgePayload.Count} adjacencies, {foreignEdges} cross-border adjacencies");
+        Console.WriteLine(
+            $"Voronoi lab: {cities.Count} cells, {rawAdjacency.Count} raw adjacencies, " +
+            $"{edgePayload.Count} terrestrial adjacencies, {foreignEdges} cross-border terrestrial adjacencies");
+    }
+
+    static Polygon ToPolygon(List<Pt> poly, double cosLat)
+    {
+        if (poly.Count < 3) return GeometryFactory.CreatePolygon();
+
+        var coords = poly
+            .Select(p => new Coordinate(p.X / cosLat, p.Y))
+            .ToList();
+
+        if (!coords[0].Equals2D(coords[^1]))
+            coords.Add(new Coordinate(coords[0]));
+
+        return GeometryFactory.CreatePolygon(coords.ToArray());
+    }
+
+    static object? GeometryToGeoJson(Geometry geometry)
+    {
+        if (geometry.IsEmpty) return null;
+
+        object Coordinates(Coordinate[] coords) =>
+            coords.Select(c => new[] { c.X, c.Y }).ToArray();
+
+        object PolygonCoordinates(Polygon polygon)
+        {
+            var rings = new List<object> { Coordinates(polygon.ExteriorRing.Coordinates) };
+            for (var i = 0; i < polygon.NumInteriorRings; i++)
+                rings.Add(Coordinates(polygon.GetInteriorRingN(i).Coordinates));
+            return rings;
+        }
+
+        if (geometry is Polygon polygon)
+            return new { type = "Polygon", coordinates = PolygonCoordinates(polygon) };
+
+        if (geometry is MultiPolygon multi)
+        {
+            var polygons = Enumerable.Range(0, multi.NumGeometries)
+                .Select(i => PolygonCoordinates((Polygon)multi.GetGeometryN(i)))
+                .ToArray();
+            return new { type = "MultiPolygon", coordinates = polygons };
+        }
+
+        // Intersection can exceptionally return a geometry collection.
+        var polygonParts = Enumerable.Range(0, geometry.NumGeometries)
+            .Select(i => geometry.GetGeometryN(i))
+            .OfType<Polygon>()
+            .ToArray();
+
+        if (polygonParts.Length == 1)
+            return new { type = "Polygon", coordinates = PolygonCoordinates(polygonParts[0]) };
+
+        if (polygonParts.Length > 1)
+            return new
+            {
+                type = "MultiPolygon",
+                coordinates = polygonParts.Select(PolygonCoordinates).ToArray()
+            };
+
+        return null;
+    }
+
+    static async Task<Geometry> LoadStudyAreaAsync(HttpClient http, IEnumerable<string> countryCodes)
+    {
+        var wanted = countryCodes.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var cacheDir = Path.Combine("data", "raw", "natural-earth");
+        Directory.CreateDirectory(cacheDir);
+        var path = Path.Combine(cacheDir, "ne_50m_admin_0_countries.geojson");
+
+        if (!File.Exists(path))
+        {
+            const string url =
+                "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_admin_0_countries.geojson";
+            var json = await http.GetStringAsync(url);
+            await File.WriteAllTextAsync(path, json);
+        }
+
+        using var document = JsonDocument.Parse(await File.ReadAllTextAsync(path));
+        var parts = new List<Geometry>();
+
+        foreach (var feature in document.RootElement.GetProperty("features").EnumerateArray())
+        {
+            var properties = feature.GetProperty("properties");
+            var iso = ReadIso2(properties);
+            if (iso is null || !wanted.Contains(iso)) continue;
+
+            var geometry = ParseGeoJsonGeometry(feature.GetProperty("geometry"));
+            if (geometry is not null && !geometry.IsEmpty)
+                parts.Add(geometry);
+        }
+
+        if (parts.Count == 0)
+            throw new InvalidOperationException("Natural Earth study-area countries were not found.");
+
+        var missing = wanted
+            .Where(code => !parts.Any())
+            .ToArray();
+
+        var union = UnaryUnionOp.Union(parts);
+        if (!union.IsValid) union = union.Buffer(0);
+        return union;
+    }
+
+    static string? ReadIso2(JsonElement properties)
+    {
+        foreach (var key in new[] { "ISO_A2", "ISO_A2_EH", "WB_A2" })
+        {
+            if (!properties.TryGetProperty(key, out var value)) continue;
+            var code = value.GetString();
+            if (!string.IsNullOrWhiteSpace(code) && code != "-99")
+                return code;
+        }
+
+        return null;
+    }
+
+    static Geometry? ParseGeoJsonGeometry(JsonElement geometry)
+    {
+        if (!geometry.TryGetProperty("type", out var typeElement)) return null;
+        if (!geometry.TryGetProperty("coordinates", out var coordinates)) return null;
+
+        return typeElement.GetString() switch
+        {
+            "Polygon" => ParsePolygon(coordinates),
+            "MultiPolygon" => GeometryFactory.CreateMultiPolygon(
+                coordinates.EnumerateArray().Select(ParsePolygon).ToArray()),
+            _ => null
+        };
+    }
+
+    static Polygon ParsePolygon(JsonElement polygonCoordinates)
+    {
+        var rings = polygonCoordinates.EnumerateArray()
+            .Select(ParseRing)
+            .ToArray();
+
+        if (rings.Length == 0)
+            return GeometryFactory.CreatePolygon();
+
+        return GeometryFactory.CreatePolygon(
+            rings[0],
+            rings.Skip(1).ToArray());
+    }
+
+    static LinearRing ParseRing(JsonElement ringCoordinates)
+    {
+        var coords = ringCoordinates.EnumerateArray()
+            .Select(point =>
+            {
+                var values = point.EnumerateArray().ToArray();
+                return new Coordinate(values[0].GetDouble(), values[1].GetDouble());
+            })
+            .ToList();
+
+        if (coords.Count > 0 && !coords[0].Equals2D(coords[^1]))
+            coords.Add(new Coordinate(coords[0]));
+
+        return GeometryFactory.CreateLinearRing(coords.ToArray());
     }
 
     static List<Pt> ClipCloserTo(List<Pt> poly, Pt site, Pt other)
