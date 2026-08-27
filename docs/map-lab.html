@@ -11,7 +11,8 @@
 *{box-sizing:border-box}
 html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1520;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text)}
 #map{width:100%;height:100%;display:block;touch-action:none;background:var(--ocean)}
-.country{stroke:var(--border);stroke-width:.75;vector-effect:non-scaling-stroke}
+.country{stroke:transparent;stroke-width:.75;vector-effect:non-scaling-stroke}
+.map-layer.lod-settled .country{stroke:var(--border)}
 .map-layer{opacity:0;pointer-events:none;transition:opacity 140ms linear;will-change:opacity}
 .map-layer.lod-active{opacity:1}
 .city circle{stroke:#fff;stroke-width:1.4;vector-effect:non-scaling-stroke}
@@ -137,15 +138,24 @@ async function prepareLod(lod,foreground=false){
  }catch(e){console.error(e);document.querySelector("#status").textContent="Erreur LOD "+lod+"m";}
  if(foreground)setLoading(false);
 }
+let lodTransitionTimer=null;
 function showLod(lod){
  const next=lodLayers[lod];
  if(!next)return;
- // Le nouveau LOD est rendu avant de lancer le crossfade.
+
+ // Pendant le fondu, on évite de superposer deux jeux de frontières blanches
+ // dont les géométries diffèrent légèrement (source du petit flash blanc sur Safari).
+ clearTimeout(lodTransitionTimer);
+ Object.values(lodLayers).forEach(layer=>layer.classed("lod-settled",false));
+
  next.classed("lod-active",true);
  requestAnimationFrame(()=>{
    Object.entries(lodLayers).forEach(([key,layer])=>{
      if(key!==lod) layer.classed("lod-active",false);
    });
+   lodTransitionTimer=setTimeout(()=>{
+     next.classed("lod-settled",true);
+   },160);
  });
  currentLod=lod;updateStatus();
 }
@@ -233,7 +243,7 @@ async function resize(){
  prepared.clear();
  Object.values(lodLayers).forEach(l=>l.selectAll("*").remove());
  drawGameplay();
- await prepareLod(currentLod,true);showLod(currentLod);
+ await prepareLod(currentLod,true);showLod(currentLod); lodLayers[currentLod]?.classed("lod-settled",true);
 }
 let lodTimer=null;
 const zoom=d3.zoom().scaleExtent([1,60]).on("zoom",e=>{
