@@ -12,8 +12,8 @@
 html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1520;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text)}
 #map{width:100%;height:100%;display:block;touch-action:none;background:var(--ocean)}
 .country{stroke:var(--border);stroke-width:.75;vector-effect:non-scaling-stroke}
-.map-layer{opacity:0;visibility:hidden;pointer-events:none;transition:opacity 140ms linear}
-.map-layer.lod-active{opacity:1;visibility:visible}
+.map-layer{opacity:0;pointer-events:none;transition:opacity 140ms linear;will-change:opacity}
+.map-layer.lod-active{opacity:1}
 .city circle{stroke:#fff;stroke-width:1.4;vector-effect:non-scaling-stroke}
 .city text{fill:#fff;font-weight:750;paint-order:stroke;stroke:#16212b;stroke-width:3px;stroke-linejoin:round}
 .army-route{fill:none;stroke:#fff;stroke-width:2.2;stroke-dasharray:4 5;vector-effect:non-scaling-stroke;opacity:.92}
@@ -140,10 +140,12 @@ async function prepareLod(lod,foreground=false){
 function showLod(lod){
  const next=lodLayers[lod];
  if(!next)return;
- // Les deux géométries se chevauchent brièvement : aucune frame vide entre les LOD.
+ // Le nouveau LOD est rendu avant de lancer le crossfade.
  next.classed("lod-active",true);
- Object.entries(lodLayers).forEach(([key,layer])=>{
-   if(key!==lod) layer.classed("lod-active",false);
+ requestAnimationFrame(()=>{
+   Object.entries(lodLayers).forEach(([key,layer])=>{
+     if(key!==lod) layer.classed("lod-active",false);
+   });
  });
  currentLod=lod;updateStatus();
 }
