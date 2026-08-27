@@ -84,7 +84,53 @@ const cityLinkRoot=mapRoot.append("g").attr("class","city-link-layer");
 const cityRoot=mapRoot.append("g").attr("class","city-layer");
 const lodLayers={},borderLayers={};
 let territoryData=null,citiesVisible=true,debugVisible=false,cityById=new Map(),neighborMap=new Map(),selectedCityId=null;
-const territoryColors={FR:"#657bc4",BE:"#d6a84f",LU:"#a874b8",DE:"#d77b62",CH:"#aeb3b5",IT:"#5fa97b",ES:"#d4a53c"};
+const territoryColors={};
+const territoryPalette=[
+ "#5B74C9","#D9913D","#6EAD78","#C96767","#9270C1","#4FA3A5",
+ "#D5B34F","#C06F9C","#6D9ED2","#8FA653","#D47C4E","#7D7DB8",
+ "#4F9A72","#C55A7A","#A47A45","#5B8F8B","#B16A4D","#7586B8",
+ "#7E9F63","#AD6FA8","#4C8CC4","#C88B59","#688F6B","#A86B6B"
+];
+function buildOwnerColors(){
+ if(!territoryData)return;
+ const owners=[...new Set(territoryData.cells.map(d=>d.ownerCode||d.country))].sort();
+ const direct=new Map(owners.map(o=>[o,new Set()]));
+ for(const e of (territoryData.edges||[])){
+  const a=cityById.get(e.a),b=cityById.get(e.b);if(!a||!b)continue;
+  const oa=a.ownerCode||a.country,ob=b.ownerCode||b.country;
+  if(oa===ob)continue;
+  direct.get(oa)?.add(ob);direct.get(ob)?.add(oa);
+ }
+ const dist2=new Map();
+ for(const o of owners){
+  const s=new Set(direct.get(o)||[]);
+  for(const n of (direct.get(o)||[]))for(const nn of (direct.get(n)||[]))if(nn!==o)s.add(nn);
+  dist2.set(o,s);
+ }
+ const assigned=new Map(),uncolored=new Set(owners);
+ while(uncolored.size){
+  let best=null,bestSat=-1,bestDeg=-1;
+  for(const o of uncolored){
+   const used=new Set([...dist2.get(o)].map(n=>assigned.get(n)).filter(v=>v!==undefined));
+   const sat=used.size,deg=dist2.get(o).size;
+   if(sat>bestSat||(sat===bestSat&&(deg>bestDeg||(deg===bestDeg&&(best===null||o<best))))){
+    best=o;bestSat=sat;bestDeg=deg;
+   }
+  }
+  const forbidden=new Set([...dist2.get(best)].map(n=>assigned.get(n)).filter(v=>v!==undefined));
+  let color=territoryPalette.findIndex((_,i)=>!forbidden.has(i));
+  if(color<0){
+   let bestIdx=0,bestConf=Infinity;
+   for(let i=0;i<territoryPalette.length;i++){
+    let conf=0;for(const n of dist2.get(best))if(assigned.get(n)===i)conf++;
+    if(conf<bestConf){bestConf=conf;bestIdx=i}
+   }
+   color=bestIdx;
+  }
+  assigned.set(best,color);uncolored.delete(best);
+ }
+ for(const [o,i] of assigned)territoryColors[o]=territoryPalette[i];
+}
 let W,H,projection,path,currentLod="110",currentStyle="state",currentTransform=d3.zoomIdentity;
 const featureCache={}, prepared=new Set(), loading=new Map();
 
@@ -213,9 +259,11 @@ function updateTerritoryStyle(){
  cityRoot.selectAll("circle.city-hit").attr("r",Math.max(10,screenRadius+4)/currentTransform.k);
  cityLinkRoot.selectAll("line").attr("stroke-width",2/currentTransform.k);
 }
-function drawTerritories(){if(!territoryData||!path)return;territoryFillRoot.selectAll("path.territory-cell").data(territoryData.cells,d=>d.id).join("path").attr("class","territory-cell").attr("fill",d=>territoryColors[d.country]||"#9aa0a6").attr("d",d=>d.geometry?path(d.geometry):null);territoryInternalRoot.selectAll("path").data(territoryData.cells,d=>d.id).join("path").attr("d",d=>d.geometry?path(d.geometry):null);
+function drawTerritories(){if(!territoryData||!path)return;
  cityById=new Map(territoryData.cells.map(d=>[d.id,d]));
  neighborMap=new Map(territoryData.cells.map(d=>[d.id,[]]));
+ buildOwnerColors();
+ territoryFillRoot.selectAll("path.territory-cell").data(territoryData.cells,d=>d.id).join("path").attr("class","territory-cell").attr("fill",d=>territoryColors[d.ownerCode||d.country]||"#9aa0a6").attr("d",d=>d.geometry?path(d.geometry):null);territoryInternalRoot.selectAll("path").data(territoryData.cells,d=>d.id).join("path").attr("d",d=>d.geometry?path(d.geometry):null);
  for(const e of (territoryData.edges||[])){
   if(neighborMap.has(e.a))neighborMap.get(e.a).push({...e,other:e.b});
   if(neighborMap.has(e.b))neighborMap.get(e.b).push({...e,other:e.a});
