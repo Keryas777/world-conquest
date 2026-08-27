@@ -12,9 +12,9 @@
 html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1520;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text)}
 #map{width:100%;height:100%;display:block;touch-action:none;background:var(--ocean)}
 .country{stroke:none}
-.map-layer{opacity:0;pointer-events:none;transition:opacity 140ms linear;will-change:opacity}
+.map-layer{opacity:0;pointer-events:none;transition:opacity 240ms ease-in-out;will-change:opacity}
 .map-layer.lod-active{opacity:1}
-.border-layer{pointer-events:none;opacity:0}
+.border-layer{pointer-events:none;opacity:0;transition:opacity 180ms ease-in-out;will-change:opacity}
 .border-layer path{fill:none;stroke:var(--border);stroke-width:.75;vector-effect:non-scaling-stroke}
 .border-layer.border-active{opacity:1}
 .city circle{stroke:#fff;stroke-width:1.4;vector-effect:non-scaling-stroke}
@@ -82,10 +82,10 @@ const routes=[["Lyon","Bruxelles",42,.55],["Munich","Paris",31,.38],["Marseille"
 let W,H,projection,path,currentLod="110",currentStyle="state",showGameplay=true,showLabels=true,currentTransform=d3.zoomIdentity;
 const featureCache={}, prepared=new Set(), loading=new Map();
 
-const LOD_UP_110_TO_50=6.0;
+const LOD_UP_110_TO_50=5.5;
 const LOD_UP_50_TO_10=40.0;
 const LOD_DOWN_10_TO_50=39.5;
-const LOD_DOWN_50_TO_110=5.9;
+const LOD_DOWN_50_TO_110=5.4;
 
 function lodForScale(k){
  if(currentLod==="110") return k>=LOD_UP_110_TO_50?"50":"110";
@@ -178,11 +178,13 @@ function showLod(lod){
 }
 async function ensureLodForScale(k){
  const wanted=lodForScale(k);
+ // Précharge le prochain niveau même si aucun changement n'est requis.
+ if(wanted==="110"&&!prepared.has("50"))setTimeout(()=>prepareLod("50"),80);
+ if(wanted==="50"&&!prepared.has("10"))setTimeout(()=>prepareLod("10"),180);
+
  if(wanted===currentLod&&prepared.has(wanted))return;
  if(!prepared.has(wanted))await prepareLod(wanted,true);
  showLod(wanted);
- if(wanted==="110")setTimeout(()=>prepareLod("50"),120);
- if(wanted==="50")setTimeout(()=>prepareLod("10"),220);
 }
 function screenPoint(city){
  const p=projection([city[1],city[2]]);
