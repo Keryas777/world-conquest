@@ -153,21 +153,27 @@ function showLod(lod){
  if(!next||!nextBorders)return;
  clearTimeout(lodTransitionTimer);
 
- // L'ancien jeu de frontières reste totalement stable pendant le fondu des aplats.
  const oldLod=currentLod;
+ const old=lodLayers[oldLod];
  const oldBorders=borderLayers[oldLod];
+
+ // Important : l'ancien aplat reste 100 % opaque pendant que le nouveau
+ // apparaît par-dessus. Deux couches semi-transparentes simultanées
+ // laissaient transparaître l'océan/fond et provoquaient le flash des terres.
+ if(old)old.classed("lod-active",true);
  if(oldBorders)oldBorders.classed("border-active",true);
 
  next.classed("lod-active",true);
- requestAnimationFrame(()=>{
+
+ lodTransitionTimer=setTimeout(()=>{
+   // Une fois le nouveau LOD totalement opaque, l'ancien peut être retiré
+   // sans modifier la luminosité des terres.
    Object.entries(lodLayers).forEach(([key,layer])=>{
      if(key!==lod)layer.classed("lod-active",false);
    });
-   // On ne bascule les frontières qu'une fois le nouvel aplat entièrement installé.
-   lodTransitionTimer=setTimeout(()=>{
-     Object.entries(borderLayers).forEach(([key,layer])=>layer.classed("border-active",key===lod));
-   },150);
- });
+   Object.entries(borderLayers).forEach(([key,layer])=>layer.classed("border-active",key===lod));
+ },150);
+
  currentLod=lod;updateStatus();
 }
 async function ensureLodForScale(k){
