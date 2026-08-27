@@ -204,6 +204,7 @@ function updateTerritoryStyle(){
  const screenRadius=cityScreenRadius(currentTransform.k);
  cityRoot.selectAll("circle.city-seed")
   .attr("r",screenRadius/currentTransform.k)
+  .attr("stroke",screenRadius>=5?"#fff":"none")
   .attr("stroke-width",screenRadius>=5?1:0);
  cityRoot.selectAll("circle.city-hit").attr("r",Math.max(10,screenRadius+4)/currentTransform.k);
  cityLinkRoot.selectAll("line").attr("stroke-width",2/currentTransform.k);
