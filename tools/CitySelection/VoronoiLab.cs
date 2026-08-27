@@ -44,6 +44,7 @@ static class VoronoiLab
         // the union of a country's cells reconstructs its present-day border/coastline.
         var countryTerritories = await LoadCountryTerritoriesAsync(http, quotas.Keys);
         var clippedCells = Enumerable.Repeat<Geometry>(GeometryFactory.CreatePolygon(), cities.Count).ToList();
+        var voronoiCandidates = new HashSet<(int A, int B)>();
 
         var globalIndexById = cities
             .Select((city, index) => (city.Id, index))
@@ -78,6 +79,19 @@ static class VoronoiLab
                     poly = ClipCloserTo(poly, countryPts[localIndex], countryPts[j]);
                 }
 
+                // Record mathematical Voronoi neighbours before any country clipping.
+                // This is much more reliable than trying to rediscover adjacency from
+                // separately clipped polygons afterwards.
+                for (var j = 0; j < countryPts.Count; j++)
+                {
+                    if (localIndex == j) continue;
+                    if (!SharesVoronoiEdge(poly, countryPts[localIndex], countryPts[j])) continue;
+
+                    var aGlobal = globalIndexById[countryCities[localIndex].Id];
+                    var bGlobal = globalIndexById[countryCities[j].Id];
+                    voronoiCandidates.Add((Math.Min(aGlobal, bGlobal), Math.Max(aGlobal, bGlobal)));
+                }
+
                 var rawCell = ToPolygon(poly, cosLat);
                 Geometry clipped;
                 try
@@ -94,10 +108,16 @@ static class VoronoiLab
             }
         }
 
-        // Rebuild the graph from the final constrained cells themselves.
-        // Same-country contacts are internal edges; different-country contacts are
-        // initial political borders. Corner-only contacts do not create adjacency.
+        // Validate same-country mathematical neighbours against the clipped
+        // geometries, then discover cross-border contacts separately.
         var adjacency = new HashSet<(int A, int B)>();
+
+        foreach (var pair in voronoiCandidates)
+        {
+            if (ShareBoundarySegment(clippedCells[pair.A], clippedCells[pair.B]))
+                adjacency.Add(pair);
+        }
+
         for (var i = 0; i < clippedCells.Count; i++)
         {
             var a = clippedCells[i];
@@ -105,22 +125,34 @@ static class VoronoiLab
 
             for (var j = i + 1; j < clippedCells.Count; j++)
             {
+                if (cities[i].Country == cities[j].Country) continue;
+
                 var b = clippedCells[j];
-                if (b.IsEmpty || !a.EnvelopeInternal.Intersects(b.EnvelopeInternal)) continue;
+                if (b.IsEmpty) continue;
 
-                Geometry shared;
-                try
-                {
-                    shared = a.Boundary.Intersection(b.Boundary);
-                }
-                catch
-                {
-                    shared = a.Buffer(0).Boundary.Intersection(b.Buffer(0).Boundary);
-                }
-
-                if (!shared.IsEmpty && shared.Length > 1e-6)
+                if (ShareBoundarySegment(a, b))
                     adjacency.Add((i, j));
             }
+        }
+
+        var degree = new int[cities.Count];
+        foreach (var (a, b) in adjacency)
+        {
+            degree[a]++;
+            degree[b]++;
+        }
+
+        var suspicious = cities
+            .Select((city, index) => new { city, index, degree = degree[index] })
+            .Where(x => x.degree <= 1)
+            .ToList();
+
+        if (suspicious.Count > 0)
+        {
+            Console.WriteLine(
+                $"Voronoi adjacency warning: {suspicious.Count} cell(s) have <= 1 neighbour: " +
+                string.Join(", ", suspicious.Take(20).Select(x => $"{x.city.Name}({x.degree})")) +
+                (suspicious.Count > 20 ? "…" : ""));
         }
 
         var cellPayload = cities.Select((city, i) => new
@@ -417,6 +449,70 @@ applyZoomStyle();
             coords.Add(new Coordinate(coords[0]));
 
         return GeometryFactory.CreateLinearRing(coords.ToArray());
+    }
+
+    static bool SharesVoronoiEdge(List<Pt> poly, Pt site, Pt other)
+    {
+        if (poly.Count < 2) return false;
+
+        var a = other.X - site.X;
+        var b = other.Y - site.Y;
+        var c = (other.X * other.X + other.Y * other.Y
+               - site.X * site.X - site.Y * site.Y) / 2.0;
+        var scale = Math.Max(1.0, Math.Sqrt(a * a + b * b));
+        var tolerance = 1e-7 * scale;
+
+        for (var i = 0; i < poly.Count; i++)
+        {
+            var p = poly[i];
+            var q = poly[(i + 1) % poly.Count];
+
+            var dp = Math.Abs(a * p.X + b * p.Y - c);
+            var dq = Math.Abs(a * q.X + b * q.Y - c);
+            if (dp > tolerance || dq > tolerance) continue;
+
+            var len = Math.Sqrt(
+                (p.X - q.X) * (p.X - q.X) +
+                (p.Y - q.Y) * (p.Y - q.Y));
+
+            if (len > 1e-6) return true;
+        }
+
+        return false;
+    }
+
+    static bool ShareBoundarySegment(Geometry a, Geometry b)
+    {
+        if (a.IsEmpty || b.IsEmpty) return false;
+
+        const double tolerance = 1e-5; // about one metre in latitude
+
+        var envA = new Envelope(a.EnvelopeInternal);
+        envA.ExpandBy(tolerance);
+        if (!envA.Intersects(b.EnvelopeInternal)) return false;
+
+        try
+        {
+            var shared = a.Boundary.Intersection(b.Boundary);
+            if (!shared.IsEmpty && shared.Length > 1e-6) return true;
+        }
+        catch
+        {
+            // Fall through to the tolerance-based test below.
+        }
+
+        // Natural Earth borders and independently clipped cells can differ by tiny
+        // floating-point amounts. A buffered boundary overlap recovers real shared
+        // segments while rejecting ordinary point-only corner contacts.
+        try
+        {
+            var overlap = a.Boundary.Buffer(tolerance).Intersection(b.Boundary.Buffer(tolerance));
+            return !overlap.IsEmpty && overlap.Area > 5e-10;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     static List<Pt> ClipCloserTo(List<Pt> poly, Pt site, Pt other)
