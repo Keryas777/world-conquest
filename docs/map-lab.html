@@ -75,8 +75,22 @@ const routes=[["Lyon","Bruxelles",42,.55],["Munich","Paris",31,.38],["Marseille"
 let W,H,projection,path,currentLod="110",currentStyle="state",showGameplay=true,showLabels=true,currentTransform=d3.zoomIdentity;
 const featureCache={}, prepared=new Set(), loading=new Map();
 
-function lodForScale(k){return k<2.35?"110":k<5.2?"50":"10"}
-function viewName(k){return k<2.35?"Monde":k<5.2?"Continent":"Régional"}
+const LOD_UP_110_TO_50=2.35;
+const LOD_UP_50_TO_10=8.5;
+const LOD_DOWN_10_TO_50=7.5;
+const LOD_DOWN_50_TO_110=2.1;
+
+function lodForScale(k){
+ if(currentLod==="110") return k>=LOD_UP_110_TO_50?"50":"110";
+ if(currentLod==="50"){
+   if(k<LOD_DOWN_50_TO_110)return "110";
+   if(k>=LOD_UP_50_TO_10)return "10";
+   return "50";
+ }
+ if(k<LOD_DOWN_10_TO_50)return "50";
+ return "10";
+}
+function viewName(){return currentLod==="110"?"Monde":currentLod==="50"?"Continent":"Régional"}
 function countryFill(d){
  const numeric=String(d.id??"").padStart(3,"0");
  if(ownerByNumeric[numeric])return ownerByNumeric[numeric];
@@ -84,7 +98,7 @@ function countryFill(d){
  return ownerByA3[a3]||getComputedStyle(document.body).getPropertyValue("--neutral").trim()||"#bfc2c3";
 }
 function updateStatus(){
- document.querySelector("#status").textContent=viewName(currentTransform.k)+" · "+currentLod+"m · "+({"state":"State-like","pastel":"Pastel","dark":"Dark"})[currentStyle]+" · LOD auto";
+ document.querySelector("#status").textContent=viewName()+" · "+currentLod+"m · "+({"state":"State-like","pastel":"Pastel","dark":"Dark"})[currentStyle]+" · LOD auto";
 }
 function setLoading(on,text){
  const el=document.querySelector("#loading");if(text)el.textContent=text;el.style.display=on?"flex":"none";
