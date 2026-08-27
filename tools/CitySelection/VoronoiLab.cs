@@ -11,6 +11,27 @@ static class VoronoiLab
     static readonly GeometryFactory GeometryFactory =
         NetTopologySuite.NtsGeometryServices.Instance.CreateGeometryFactory(srid: 4326);
 
+    // Geographic territory and diplomatic owner are deliberately separate.
+    // These overseas territories keep their own geometry/city selection but
+    // belong to France for ownership, diplomacy and war.
+    static readonly HashSet<string> FrenchOwnedTerritories =
+        new(StringComparer.OrdinalIgnoreCase) { "GF", "GP", "MQ", "RE", "YT" };
+
+    static string OwnerCode(string territoryCode) =>
+        FrenchOwnedTerritories.Contains(territoryCode) ? "FR" : territoryCode;
+
+    static readonly Dictionary<string, string[]> TerritoryNameAliases =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["GF"] = new[] { "French Guiana", "Guyane française", "Guyane" },
+            ["GP"] = new[] { "Guadeloupe" },
+            ["MQ"] = new[] { "Martinique" },
+            ["RE"] = new[] { "Réunion", "Reunion" },
+            ["YT"] = new[] { "Mayotte" },
+            ["TW"] = new[] { "Taiwan" },
+            ["XK"] = new[] { "Kosovo" }
+        };
+
     public static async Task GenerateWorldAsync(
         HttpClient http,
         string outDir,
@@ -167,6 +188,8 @@ static class VoronoiLab
             id = city.Id,
             name = city.Name,
             country = city.Country,
+            territoryCode = city.Country,
+            ownerCode = OwnerCode(city.Country),
             lat = city.Lat,
             lon = city.Lon,
             population = city.Population,
@@ -179,7 +202,9 @@ static class VoronoiLab
             {
                 a = cities[x.A].Id,
                 b = cities[x.B].Id,
-                foreign = cities[x.A].Country != cities[x.B].Country,
+                foreign = OwnerCode(cities[x.A].Country) != OwnerCode(cities[x.B].Country),
+                aOwner = OwnerCode(cities[x.A].Country),
+                bOwner = OwnerCode(cities[x.B].Country),
                 km = Math.Round(Geo.Km(cities[x.A], cities[x.B]), 1)
             }).ToList();
 
@@ -358,64 +383,116 @@ applyZoomStyle();
         IEnumerable<string> countryCodes)
     {
         var wanted = countryCodes.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var result = new Dictionary<string, Geometry>(StringComparer.OrdinalIgnoreCase);
         var cacheDir = Path.Combine("data", "raw", "natural-earth");
         Directory.CreateDirectory(cacheDir);
-        var path = Path.Combine(cacheDir, "ne_10m_admin_0_countries_iso.geojson");
 
-        if (!File.Exists(path))
+        // Countries ISO handles almost everything. Map units/subunits provide
+        // overseas and disputed geographic units that are intentionally absent
+        // from the countries layer.
+        var sources = new[]
         {
-            // Use Natural Earth's ISO-normalized admin-0 layer for the worldwide
-            // pipeline. The generic countries layer intentionally merges some
-            // ISO territories (for example BQ) into their sovereign state.
-            const string url =
-                "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries_iso.geojson";
-            var json = await http.GetStringAsync(url);
-            await File.WriteAllTextAsync(path, json);
-        }
+            "ne_10m_admin_0_countries_iso.geojson",
+            "ne_10m_admin_0_map_units.geojson",
+            "ne_10m_admin_0_map_subunits.geojson"
+        };
 
-        using var document = JsonDocument.Parse(await File.ReadAllTextAsync(path));
-        var partsByCountry = wanted.ToDictionary(
-            code => code,
-            _ => new List<Geometry>(),
-            StringComparer.OrdinalIgnoreCase);
-
-        foreach (var feature in document.RootElement.GetProperty("features").EnumerateArray())
+        foreach (var fileName in sources)
         {
-            var properties = feature.GetProperty("properties");
-            var iso = ReadIso2(properties);
-            if (iso is null || !wanted.Contains(iso)) continue;
+            var remaining = wanted.Where(code => !result.ContainsKey(code)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (remaining.Count == 0) break;
 
-            var geometry = ParseGeoJsonGeometry(feature.GetProperty("geometry"));
-            if (geometry is not null && !geometry.IsEmpty)
-                partsByCountry[iso].Add(geometry);
-        }
-
-        var result = new Dictionary<string, Geometry>(StringComparer.OrdinalIgnoreCase);
-        var missing = new List<string>();
-
-        foreach (var code in wanted)
-        {
-            var parts = partsByCountry[code];
-            if (parts.Count == 0)
+            var path = Path.Combine(cacheDir, fileName);
+            if (!File.Exists(path))
             {
-                missing.Add(code);
-                continue;
+                var url =
+                    "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/" + fileName;
+                var json = await http.GetStringAsync(url);
+                await File.WriteAllTextAsync(path, json);
             }
 
-            var geometry = UnaryUnionOp.Union(parts);
-            if (!geometry.IsValid) geometry = geometry.Buffer(0);
-            result[code] = geometry;
+            using var document = JsonDocument.Parse(await File.ReadAllTextAsync(path));
+            var partsByCode = remaining.ToDictionary(
+                code => code,
+                _ => new List<Geometry>(),
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (var feature in document.RootElement.GetProperty("features").EnumerateArray())
+            {
+                var properties = feature.GetProperty("properties");
+                var codes = ReadTerritoryCodes(properties, remaining).ToArray();
+                if (codes.Length == 0) continue;
+
+                var geometry = ParseGeoJsonGeometry(feature.GetProperty("geometry"));
+                if (geometry is null || geometry.IsEmpty) continue;
+
+                foreach (var code in codes)
+                    partsByCode[code].Add(geometry);
+            }
+
+            foreach (var code in remaining)
+            {
+                var parts = partsByCode[code];
+                if (parts.Count == 0) continue;
+                var geometry = UnaryUnionOp.Union(parts);
+                if (!geometry.IsValid) geometry = geometry.Buffer(0);
+                result[code] = geometry;
+            }
+
+            Console.WriteLine(
+                $"Natural Earth territory source {fileName}: {result.Count}/{wanted.Count} resolved.");
         }
 
-        if (missing.Count > 0)
+        var missing = wanted.Where(code => !result.ContainsKey(code)).OrderBy(x => x).ToArray();
+        if (missing.Length > 0)
             throw new InvalidOperationException(
-                "Natural Earth ISO territory mapping missing for: " +
-                string.Join(", ", missing.OrderBy(x => x)));
+                "Natural Earth territory mapping missing for: " + string.Join(", ", missing));
 
-        Console.WriteLine(
-            $"Natural Earth ISO territories loaded: {result.Count}/{wanted.Count}.");
-
+        Console.WriteLine($"Natural Earth territories loaded: {result.Count}/{wanted.Count}.");
         return result;
+    }
+
+    static IEnumerable<string> ReadTerritoryCodes(
+        JsonElement properties,
+        IReadOnlySet<string> wanted)
+    {
+        var direct = ReadIso2(properties);
+        if (direct is not null && wanted.Contains(direct))
+            yield return direct;
+
+        string? ReadName(string key)
+        {
+            if (!properties.TryGetProperty(key, out var value)) return null;
+            return value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        }
+
+        var names = new[]
+        {
+            ReadName("NAME"), ReadName("NAME_LONG"), ReadName("ADMIN"),
+            ReadName("GEOUNIT"), ReadName("SUBUNIT"), ReadName("BRK_NAME"),
+            ReadName("FORMAL_EN")
+        }.Where(x => !string.IsNullOrWhiteSpace(x)).ToArray();
+
+        foreach (var (code, aliases) in TerritoryNameAliases)
+        {
+            if (!wanted.Contains(code)) continue;
+            if (names.Any(name => aliases.Any(alias =>
+                    string.Equals(name, alias, StringComparison.OrdinalIgnoreCase))))
+                yield return code;
+        }
+
+        // Natural Earth often encodes Taiwan/Kosovo with non-ISO admin-0 codes.
+        if (properties.TryGetProperty("ADM0_A3", out var a3) && a3.ValueKind == JsonValueKind.String)
+        {
+            var code = a3.GetString() switch
+            {
+                "TWN" => "TW",
+                "KOS" => "XK",
+                _ => null
+            };
+            if (code is not null && wanted.Contains(code))
+                yield return code;
+        }
     }
 
     static string? ReadIso2(JsonElement properties)
