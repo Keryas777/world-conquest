@@ -36,6 +36,77 @@ static class VoronoiLab
         }
 
         var cities = selected.Values.SelectMany(x => x).ToList();
+
+        // Diagnostic only: detect selected cities from different countries that are
+        // very close to each other. This lets us choose a sensible global minimum
+        // spacing before changing the selector itself.
+        var crossBorderPairs = new List<object>();
+        var crossBorderPairRows = new List<(City A, City B, double Km)>();
+        for (var i = 0; i < cities.Count; i++)
+        {
+            for (var j = i + 1; j < cities.Count; j++)
+            {
+                if (cities[i].Country == cities[j].Country) continue;
+                var km = Geo.Km(cities[i], cities[j]);
+                if (km > 50.0) continue;
+
+                crossBorderPairRows.Add((cities[i], cities[j], km));
+                crossBorderPairs.Add(new
+                {
+                    aId = cities[i].Id,
+                    aName = cities[i].Name,
+                    aCountry = cities[i].Country,
+                    bId = cities[j].Id,
+                    bName = cities[j].Name,
+                    bCountry = cities[j].Country,
+                    km = Math.Round(km, 2)
+                });
+            }
+        }
+
+        crossBorderPairRows = crossBorderPairRows.OrderBy(x => x.Km).ToList();
+        var spacingThresholds = new[] { 10, 20, 30, 40, 50 };
+        Console.WriteLine("Cross-border city spacing diagnostic (selected cities):");
+        foreach (var threshold in spacingThresholds)
+            Console.WriteLine($"  <= {threshold,2} km : {crossBorderPairRows.Count(x => x.Km <= threshold)} pair(s)");
+
+        foreach (var row in crossBorderPairRows.Take(40))
+            Console.WriteLine(
+                $"  {row.A.Name} ({row.A.Country}) <-> {row.B.Name} ({row.B.Country}) : {row.Km:F1} km");
+
+        var spacingReport = new
+        {
+            sampleCountries = quotas.Keys.ToArray(),
+            selectedCityCount = cities.Count,
+            maxReportedDistanceKm = 50,
+            countsByThresholdKm = spacingThresholds.ToDictionary(
+                threshold => threshold.ToString(CultureInfo.InvariantCulture),
+                threshold => crossBorderPairRows.Count(x => x.Km <= threshold)),
+            pairs = crossBorderPairs
+        };
+        await File.WriteAllTextAsync(
+            Path.Combine(outDir, "cross-border-spacing-report.json"),
+            JsonSerializer.Serialize(spacingReport, new JsonSerializerOptions { WriteIndented = true }));
+
+        var spacingMarkdown = new System.Text.StringBuilder();
+        spacingMarkdown.AppendLine("# Cross-border city spacing diagnostic");
+        spacingMarkdown.AppendLine();
+        spacingMarkdown.AppendLine($"Selected cities: **{cities.Count}**");
+        spacingMarkdown.AppendLine();
+        spacingMarkdown.AppendLine("| Threshold | Cross-border pairs |");
+        spacingMarkdown.AppendLine("|---:|---:|");
+        foreach (var threshold in spacingThresholds)
+            spacingMarkdown.AppendLine($"| <= {threshold} km | {crossBorderPairRows.Count(x => x.Km <= threshold)} |");
+        spacingMarkdown.AppendLine();
+        spacingMarkdown.AppendLine("## Pairs within 50 km");
+        spacingMarkdown.AppendLine();
+        foreach (var row in crossBorderPairRows)
+            spacingMarkdown.AppendLine(
+                $"- {row.A.Name} ({row.A.Country}) <-> {row.B.Name} ({row.B.Country}): {row.Km:F1} km");
+        await File.WriteAllTextAsync(
+            Path.Combine(outDir, "cross-border-spacing-report.md"),
+            spacingMarkdown.ToString());
+
         var referenceLat = cities.Average(c => c.Lat) * Math.PI / 180.0;
         var cosLat = Math.Cos(referenceLat);
 
