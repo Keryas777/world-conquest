@@ -38,9 +38,10 @@ jobs:
           cp data/generated/city-selection/frontier-graph.json docs/frontier-graph.json
           cp data/generated/city-selection/voronoi.html docs/voronoi.html
           cp data/generated/city-selection/voronoi-graph.json docs/voronoi-graph.json
+          cp data/generated/city-selection/world-selection-C.json docs/world-selection-C.json
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/frontiers.html docs/frontier-graph.json docs/voronoi.html docs/voronoi-graph.json
+          git add docs/frontiers.html docs/frontier-graph.json docs/voronoi.html docs/voronoi-graph.json docs/world-selection-C.json
           if git diff --cached --quiet; then
             echo "No generated viewer changes to publish."
           else
