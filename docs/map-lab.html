@@ -177,7 +177,7 @@ async function resize(){
  await prepareLod(currentLod,true);showLod(currentLod); borderLayers[currentLod]?.classed("border-active",true);
 }
 let lodTimer=null;
-const zoom=d3.zoom().scaleExtent([1,60]).on("zoom",e=>{
+const zoom=d3.zoom().scaleExtent([1,200]).on("zoom",e=>{
  currentTransform=e.transform;mapRoot.attr("transform",e.transform);updateStatus();
  clearTimeout(lodTimer);lodTimer=setTimeout(()=>ensureLodForScale(e.transform.k),90);
 });
