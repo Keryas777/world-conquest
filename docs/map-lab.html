@@ -98,7 +98,7 @@ function countryFill(d){
  return ownerByA3[a3]||getComputedStyle(document.body).getPropertyValue("--neutral").trim()||"#bfc2c3";
 }
 function updateStatus(){
- document.querySelector("#status").textContent=viewName()+" · "+currentLod+"m · "+({"state":"State-like","pastel":"Pastel","dark":"Dark"})[currentStyle]+" · LOD auto";
+ document.querySelector("#status").textContent=viewName()+" · "+currentLod+"m · "+({"state":"State-like","pastel":"Pastel","dark":"Dark"})[currentStyle]+" · LOD auto · Zoom ×"+currentTransform.k.toFixed(2);
 }
 function setLoading(on,text){
  const el=document.querySelector("#loading");if(text)el.textContent=text;el.style.display=on?"flex":"none";
@@ -226,7 +226,7 @@ async function resize(){
  await prepareLod(currentLod,true);showLod(currentLod);
 }
 let lodTimer=null;
-const zoom=d3.zoom().scaleExtent([1,18]).on("zoom",e=>{
+const zoom=d3.zoom().scaleExtent([1,60]).on("zoom",e=>{
  currentTransform=e.transform;mapRoot.attr("transform",e.transform);drawGameplay();updateStatus();
  clearTimeout(lodTimer);lodTimer=setTimeout(()=>ensureLodForScale(e.transform.k),90);
 });
