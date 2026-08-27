@@ -11,101 +11,20 @@ static class VoronoiLab
     static readonly GeometryFactory GeometryFactory =
         NetTopologySuite.NtsGeometryServices.Instance.CreateGeometryFactory(srid: 4326);
 
-    public static async Task GenerateAsync(
+    public static async Task GenerateWorldAsync(
         HttpClient http,
         string outDir,
-        IReadOnlyDictionary<string, List<City>> alreadyLoaded,
+        IReadOnlyDictionary<string, List<City>> worldSelection,
         double populationWeight = .60)
     {
-        var quotas = new Dictionary<string, int>
-        {
-            ["FR"] = 85, ["BE"] = 18, ["LU"] = 3,
-            ["DE"] = 75, ["CH"] = 20, ["IT"] = 55, ["ES"] = 65
-        };
-
-        const long minPopulation = 500;
-        var selected = new Dictionary<string, List<City>>();
-
-        foreach (var (code, quota) in quotas)
-        {
-            List<City> candidates;
-            if (alreadyLoaded.TryGetValue(code, out var loaded)) candidates = loaded;
-            else candidates = await LoadAsync(http, code, minPopulation);
-
-            selected[code] = Selector.Select(candidates, quota, populationWeight);
-        }
-
+        var selected = worldSelection.ToDictionary(
+            x => x.Key,
+            x => x.Value.ToList(),
+            StringComparer.OrdinalIgnoreCase);
+        var quotas = selected.ToDictionary(x => x.Key, x => x.Value.Count, StringComparer.OrdinalIgnoreCase);
         var cities = selected.Values.SelectMany(x => x).ToList();
 
-        // Diagnostic only: detect selected cities from different countries that are
-        // very close to each other. This lets us choose a sensible global minimum
-        // spacing before changing the selector itself.
-        var crossBorderPairs = new List<object>();
-        var crossBorderPairRows = new List<(City A, City B, double Km)>();
-        for (var i = 0; i < cities.Count; i++)
-        {
-            for (var j = i + 1; j < cities.Count; j++)
-            {
-                if (cities[i].Country == cities[j].Country) continue;
-                var km = Geo.Km(cities[i], cities[j]);
-                if (km > 50.0) continue;
-
-                crossBorderPairRows.Add((cities[i], cities[j], km));
-                crossBorderPairs.Add(new
-                {
-                    aId = cities[i].Id,
-                    aName = cities[i].Name,
-                    aCountry = cities[i].Country,
-                    bId = cities[j].Id,
-                    bName = cities[j].Name,
-                    bCountry = cities[j].Country,
-                    km = Math.Round(km, 2)
-                });
-            }
-        }
-
-        crossBorderPairRows = crossBorderPairRows.OrderBy(x => x.Km).ToList();
-        var spacingThresholds = new[] { 10, 20, 30, 40, 50 };
-        Console.WriteLine("Cross-border city spacing diagnostic (selected cities):");
-        foreach (var threshold in spacingThresholds)
-            Console.WriteLine($"  <= {threshold,2} km : {crossBorderPairRows.Count(x => x.Km <= threshold)} pair(s)");
-
-        foreach (var row in crossBorderPairRows.Take(40))
-            Console.WriteLine(
-                $"  {row.A.Name} ({row.A.Country}) <-> {row.B.Name} ({row.B.Country}) : {row.Km:F1} km");
-
-        var spacingReport = new
-        {
-            sampleCountries = quotas.Keys.ToArray(),
-            selectedCityCount = cities.Count,
-            maxReportedDistanceKm = 50,
-            countsByThresholdKm = spacingThresholds.ToDictionary(
-                threshold => threshold.ToString(CultureInfo.InvariantCulture),
-                threshold => crossBorderPairRows.Count(x => x.Km <= threshold)),
-            pairs = crossBorderPairs
-        };
-        await File.WriteAllTextAsync(
-            Path.Combine(outDir, "cross-border-spacing-report.json"),
-            JsonSerializer.Serialize(spacingReport, new JsonSerializerOptions { WriteIndented = true }));
-
-        var spacingMarkdown = new System.Text.StringBuilder();
-        spacingMarkdown.AppendLine("# Cross-border city spacing diagnostic");
-        spacingMarkdown.AppendLine();
-        spacingMarkdown.AppendLine($"Selected cities: **{cities.Count}**");
-        spacingMarkdown.AppendLine();
-        spacingMarkdown.AppendLine("| Threshold | Cross-border pairs |");
-        spacingMarkdown.AppendLine("|---:|---:|");
-        foreach (var threshold in spacingThresholds)
-            spacingMarkdown.AppendLine($"| <= {threshold} km | {crossBorderPairRows.Count(x => x.Km <= threshold)} |");
-        spacingMarkdown.AppendLine();
-        spacingMarkdown.AppendLine("## Pairs within 50 km");
-        spacingMarkdown.AppendLine();
-        foreach (var row in crossBorderPairRows)
-            spacingMarkdown.AppendLine(
-                $"- {row.A.Name} ({row.A.Country}) <-> {row.B.Name} ({row.B.Country}): {row.Km:F1} km");
-        await File.WriteAllTextAsync(
-            Path.Combine(outDir, "cross-border-spacing-report.md"),
-            spacingMarkdown.ToString());
+        Console.WriteLine($"Worldwide Voronoi input: {cities.Count:N0} selected cities in {selected.Count} countries.");
 
         var referenceLat = cities.Average(c => c.Lat) * Math.PI / 180.0;
         var cosLat = Math.Cos(referenceLat);
@@ -189,20 +108,37 @@ static class VoronoiLab
                 adjacency.Add(pair);
         }
 
-        for (var i = 0; i < clippedCells.Count; i++)
+        // Cross-border adjacency: only compare cells from countries whose
+        // Natural Earth envelopes touch. This avoids an O(n²) world scan.
+        var indicesByCountry = cities
+            .Select((city, index) => (city.Country, index))
+            .GroupBy(x => x.Country, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.index).ToArray(), StringComparer.OrdinalIgnoreCase);
+        var countryCodes = selected.Keys.ToArray();
+
+        for (var ci = 0; ci < countryCodes.Length; ci++)
         {
-            var a = clippedCells[i];
-            if (a.IsEmpty) continue;
+            var codeA = countryCodes[ci];
+            var envA = new Envelope(countryTerritories[codeA].EnvelopeInternal);
+            envA.ExpandBy(1e-4);
 
-            for (var j = i + 1; j < clippedCells.Count; j++)
+            for (var cj = ci + 1; cj < countryCodes.Length; cj++)
             {
-                if (cities[i].Country == cities[j].Country) continue;
+                var codeB = countryCodes[cj];
+                if (!envA.Intersects(countryTerritories[codeB].EnvelopeInternal)) continue;
 
-                var b = clippedCells[j];
-                if (b.IsEmpty) continue;
-
-                if (ShareBoundarySegment(a, b))
-                    adjacency.Add((i, j));
+                foreach (var i in indicesByCountry[codeA])
+                {
+                    var a = clippedCells[i];
+                    if (a.IsEmpty) continue;
+                    foreach (var j in indicesByCountry[codeB])
+                    {
+                        var b = clippedCells[j];
+                        if (b.IsEmpty) continue;
+                        if (ShareBoundarySegment(a, b))
+                            adjacency.Add((Math.Min(i, j), Math.Max(i, j)));
+                    }
+                }
             }
         }
 
@@ -249,7 +185,7 @@ static class VoronoiLab
 
         var jsonCells = JsonSerializer.Serialize(cellPayload);
         var jsonEdges = JsonSerializer.Serialize(edgePayload);
-        var quotaText = string.Join(" · ", quotas.Select(x => $"{x.Key} {x.Value}"));
+        var quotaText = $"{cities.Count:N0} villes · {selected.Count} pays/territoires";
 
         var html = $$"""
 <!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -267,7 +203,8 @@ html,body,#map{height:100%;margin:0}body{font-family:-apple-system,BlinkMacSyste
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 const cells={{jsonCells}}, edges={{jsonEdges}};
-const colors={FR:'#3178ff',BE:'#ff9d19',LU:'#ef3d5c',DE:'#8b5cf6',CH:'#f43f5e',IT:'#22c55e',ES:'#facc15'};
+const colors={};
+function countryColor(code){let h=0;for(const ch of code)h=(h*31+ch.charCodeAt(0))%360;return 'hsl('+h+' 62% 52%)';}
 const byId=new Map(cells.map(c=>[c.id,c]));
 const neighbors=new Map(cells.map(c=>[c.id,[]]));
 for(const e of edges){neighbors.get(e.a).push({...e,other:e.b});neighbors.get(e.b).push({...e,other:e.a});}
@@ -279,7 +216,7 @@ for(const c of cells){
   if(!c.geometry) continue;
   const layer=L.geoJSON(c.geometry,{style:{
     color:'#94a3b8',weight:.8,opacity:.72,
-    fillColor:colors[c.country]||'#aaa',fillOpacity:.12
+    fillColor:countryColor(c.country),fillOpacity:.12
   },interactive:false}).addTo(map);
   cellLayers.push(layer);
 }
@@ -288,7 +225,7 @@ const cityLayers=[];
 for(const c of cells){
   const list=neighbors.get(c.id)||[];
   const foreign=list.filter(e=>e.foreign);
-  const marker=L.circleMarker([c.lat,c.lon],{radius:5,color:'#fff',weight:1,fillColor:colors[c.country]||'#aaa',fillOpacity:.95})
+  const marker=L.circleMarker([c.lat,c.lon],{radius:5,color:'#fff',weight:1,fillColor:countryColor(c.country),fillOpacity:.95})
    .bindPopup(()=>{
       const rows=list.slice().sort((a,b)=>a.km-b.km).map(e=>{const o=byId.get(e.other);return '<span style="color:'+(e.foreign?'#ffcf5a':'#cbd5e1')+'">'+o.name+' ('+o.country+') — '+e.km+' km</span>';}).join('<br>');
       return '<b>'+c.name+'</b> ('+c.country+')<br>'+Number(c.population).toLocaleString('fr-FR')+' hab.<br><b>'+list.length+'</b> voisin(s) terrestre(s), <b>'+foreign.length+'</b> étranger(s)<br>'+rows;
@@ -343,7 +280,7 @@ applyZoomStyle();
                     populationWeight,
                     quotas,
                     referenceLat = referenceLat * 180.0 / Math.PI,
-                    generation = "country-constrained Voronoi",
+                    generation = "worldwide country-constrained Voronoi formula C",
                     borderSource = "Natural Earth 1:10m admin-0 countries",
                     terrestrialAdjacencyCount = adjacency.Count,
                     cells = cellPayload,
