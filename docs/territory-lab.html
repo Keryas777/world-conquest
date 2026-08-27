@@ -180,10 +180,18 @@ async function ensureLodForScale(k){
  showLod(wanted);
 }
 function territoryInternalOpacity(k){if(k<40)return 0;if(k<45)return .08*((k-40)/5);if(k<60)return .08+.42*((k-45)/15);if(k<80)return .50+.35*((k-60)/20);return .85}
+function cityScreenRadius(k){
+ if(k<40)return 5;
+ if(k<60)return 5+2*((k-40)/20);
+ if(k<100)return 7+4*((k-60)/40);
+ if(k<160)return 11+3*((k-100)/60);
+ return Math.min(16,14+2*((k-160)/40));
+}
 function updateTerritoryStyle(){
  territoryInternalRoot.attr("opacity",territoryInternalOpacity(currentTransform.k));
  cityRoot.attr("display",citiesVisible?null:"none");
- cityRoot.selectAll("circle").attr("r",Math.max(2.2,4.5/currentTransform.k));
+ const screenRadius=cityScreenRadius(currentTransform.k);
+ cityRoot.selectAll("circle").attr("r",screenRadius/currentTransform.k);
 }
 function drawTerritories(){if(!territoryData||!path)return;territoryFillRoot.selectAll("path.territory-cell").data(territoryData.cells,d=>d.id).join("path").attr("class","territory-cell").attr("fill",d=>territoryColors[d.country]||"#9aa0a6").attr("d",d=>d.geometry?path(d.geometry):null);territoryInternalRoot.selectAll("path").data(territoryData.cells,d=>d.id).join("path").attr("d",d=>d.geometry?path(d.geometry):null);
  cityRoot.selectAll("circle.city-seed").data(territoryData.cells,d=>d.id).join("circle")
