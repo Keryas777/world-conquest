@@ -75,10 +75,10 @@ const routes=[["Lyon","Bruxelles",42,.55],["Munich","Paris",31,.38],["Marseille"
 let W,H,projection,path,currentLod="110",currentStyle="state",showGameplay=true,showLabels=true,currentTransform=d3.zoomIdentity;
 const featureCache={}, prepared=new Set(), loading=new Map();
 
-const LOD_UP_110_TO_50=8.0;
+const LOD_UP_110_TO_50=7.0;
 const LOD_UP_50_TO_10=40.0;
 const LOD_DOWN_10_TO_50=39.5;
-const LOD_DOWN_50_TO_110=7.9;
+const LOD_DOWN_50_TO_110=6.9;
 
 function lodForScale(k){
  if(currentLod==="110") return k>=LOD_UP_110_TO_50?"50":"110";
