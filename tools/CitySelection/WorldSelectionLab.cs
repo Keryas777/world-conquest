@@ -19,7 +19,7 @@ static class WorldSelectionLab
     const double PopulationWeight = .60;
     const double CrossBorderDiagnosticKm = 25.0;
 
-    public static async Task GenerateAsync(HttpClient http, string outDir)
+    public static async Task<Dictionary<string, List<City>>> GenerateAsync(HttpClient http, string outDir)
     {
         var countries = await LoadCountryInfoAsync(http);
         if (!countries.TryGetValue("FR", out var france))
@@ -29,6 +29,7 @@ static class WorldSelectionLab
         Console.WriteLine($"World selection lab: {candidates.Values.Sum(x => x.Count):N0} candidates in {candidates.Count} countries.");
 
         var summary = new List<object>();
+        Dictionary<string, List<City>>? finalSelection = null;
 
         foreach (var formula in Formulas)
         {
@@ -128,11 +129,14 @@ static class WorldSelectionLab
                 cities = all.Count,
                 closeCrossBorderPairs25Km = closePairs.Count
             });
+            finalSelection = selected;
         }
 
         await File.WriteAllTextAsync(
             Path.Combine(outDir, "world-selection-summary.json"),
             JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true }));
+
+        return finalSelection ?? throw new InvalidOperationException("World selection produced no result.");
     }
 
     static async Task<Dictionary<string, CountryInfo>> LoadCountryInfoAsync(HttpClient http)
