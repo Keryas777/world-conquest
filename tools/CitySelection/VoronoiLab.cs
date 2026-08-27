@@ -212,87 +212,16 @@ static class VoronoiLab
         var jsonEdges = JsonSerializer.Serialize(edgePayload);
         var quotaText = $"{cities.Count:N0} villes · {selected.Count} pays/territoires";
 
-        var html = $$"""
-<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+        var html = """
+<!doctype html><html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="0; url=territory-lab.html">
 <title>World Conquest — Voronoï Lab</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<style>
-html,body,#map{height:100%;margin:0}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#071022;color:#eef3ff}
-.top{position:absolute;z-index:1000;top:10px;left:10px;right:10px;background:rgba(7,16,34,.94);border:1px solid #2a3555;border-radius:14px;padding:10px 12px;box-shadow:0 8px 24px #0006}.top b{font-size:15px}.muted{font-size:11px;color:#aab5cf;margin-top:3px}
-.legend{position:absolute;z-index:1000;right:10px;bottom:20px;background:rgba(7,16,34,.94);border:1px solid #2a3555;border-radius:12px;padding:9px;font-size:11px}
-.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#111b31;color:#eef3ff}
-</style></head><body>
-<div id="map"></div>
-<div class="top"><b>🕸️ Voronoï — maillage implicite des villes</b><div class="muted">{{quotaText}} · 60/40 · Voronoï contraint par pays · Natural Earth 10m</div></div>
-<div class="legend">Clique une ville : ses voisins terrestres apparaissent.<br><span style="color:#ffcf5a">— voisin étranger</span> · <span style="color:#9ca3af">— voisin interne</span></div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script>
-const cells={{jsonCells}}, edges={{jsonEdges}};
-const colors={};
-function countryColor(code){let h=0;for(const ch of code)h=(h*31+ch.charCodeAt(0))%360;return 'hsl('+h+' 62% 52%)';}
-const byId=new Map(cells.map(c=>[c.id,c]));
-const neighbors=new Map(cells.map(c=>[c.id,[]]));
-for(const e of edges){neighbors.get(e.a).push({...e,other:e.b});neighbors.get(e.b).push({...e,other:e.a});}
-const map=L.map('map').setView([48,5],5);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:13,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
-
-const cellLayers=[];
-for(const c of cells){
-  if(!c.geometry) continue;
-  const layer=L.geoJSON(c.geometry,{style:{
-    color:'#94a3b8',weight:.8,opacity:.72,
-    fillColor:countryColor(c.country),fillOpacity:.12
-  },interactive:false}).addTo(map);
-  cellLayers.push(layer);
-}
-const highlight=L.layerGroup().addTo(map);
-const cityLayers=[];
-for(const c of cells){
-  const list=neighbors.get(c.id)||[];
-  const foreign=list.filter(e=>e.foreign);
-  const marker=L.circleMarker([c.lat,c.lon],{radius:5,color:'#fff',weight:1,fillColor:countryColor(c.country),fillOpacity:.95})
-   .bindPopup(()=>{
-      const rows=list.slice().sort((a,b)=>a.km-b.km).map(e=>{const o=byId.get(e.other);return '<span style="color:'+(e.foreign?'#ffcf5a':'#cbd5e1')+'">'+o.name+' ('+o.country+') — '+e.km+' km</span>';}).join('<br>');
-      return '<b>'+c.name+'</b> ('+c.country+')<br>'+Number(c.population).toLocaleString('fr-FR')+' hab.<br><b>'+list.length+'</b> voisin(s) terrestre(s), <b>'+foreign.length+'</b> étranger(s)<br>'+rows;
-   })
-   .on('click',()=>{
-      highlight.clearLayers();
-      for(const e of list){
-        const o=byId.get(e.other);
-        L.polyline([[c.lat,c.lon],[o.lat,o.lon]],{color:e.foreign?'#ffcf5a':'#9ca3af',weight:e.foreign?3:2,opacity:.95,interactive:false}).addTo(highlight);
-      }
-   }).addTo(map);
-  cityLayers.push(marker);
-}
-function applyZoomStyle(){
-  const z=map.getZoom();
-  const radius =
-    z<=5 ? 5 :
-    z===6 ? 7 :
-    z===7 ? 10 :
-    z===8 ? 14 :
-    z===9 ? 18 :
-    z===10 ? 23 :
-    z===11 ? 28 :
-    z===12 ? 34 : 40;
-  const cellWeight =
-    z<=5 ? .8 :
-    z===6 ? 1 :
-    z===7 ? 1.3 :
-    z===8 ? 1.7 :
-    z===9 ? 2.2 :
-    z===10 ? 2.8 :
-    z===11 ? 3.5 :
-    z===12 ? 4.2 : 5;
-  const cellOpacity = z<=5?.72:z===6?.80:z===7?.86:z===8?.90:z===9?.93:.96;
-  const fillOpacity = z<=5?.12:z===6?.14:z===7?.16:z===8?.18:z===9?.20:z===10?.22:z===11?.24:z===12?.26:.28;
-  for(const marker of cityLayers) marker.setRadius(radius);
-  for(const layer of cellLayers) layer.setStyle({weight:cellWeight,opacity:cellOpacity,fillOpacity});
-}
-map.on('zoomend',applyZoomStyle);
-map.fitBounds(cells.map(c=>[c.lat,c.lon]),{padding:[20,20]});
-applyZoomStyle();
-</script></body></html>
+<style>body{font-family:system-ui;background:#071022;color:#eef3ff;padding:2rem}a{color:#9ecbff}</style>
+</head><body>
+<p>Le laboratoire Voronoï mondial est désormais intégré au Territory Lab.</p>
+<p><a href="territory-lab.html">Ouvrir le Territory Lab</a></p>
+</body></html>
 """;
 
         Directory.CreateDirectory(outDir);
@@ -310,8 +239,7 @@ applyZoomStyle();
                     terrestrialAdjacencyCount = adjacency.Count,
                     cells = cellPayload,
                     edges = edgePayload
-                },
-                new JsonSerializerOptions { WriteIndented = true }));
+                }));
 
         var foreignEdges = edgePayload.Count(e => e.foreign);
         Console.WriteLine(
@@ -338,7 +266,11 @@ applyZoomStyle();
         if (geometry.IsEmpty) return null;
 
         object Coordinates(Coordinate[] coords) =>
-            coords.Select(c => new[] { c.X, c.Y }).ToArray();
+            coords.Select(c => new[]
+            {
+                Math.Round(c.X, 5),
+                Math.Round(c.Y, 5)
+            }).ToArray();
 
         object PolygonCoordinates(Polygon polygon)
         {
