@@ -21,7 +21,7 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1520;fon
 .territory-cell{stroke:none}
 .territory-internal-layer path{fill:none;stroke:#fff;stroke-width:.55;vector-effect:non-scaling-stroke}
 .city-layer{pointer-events:none}
-.city-seed{fill:#17222c;stroke:#fff;stroke-width:1;vector-effect:non-scaling-stroke;pointer-events:none}
+.city-seed{fill:#17222c;stroke:none;stroke-width:0;vector-effect:non-scaling-stroke;pointer-events:none}
 .city-hit{fill:transparent;stroke:none;pointer-events:all;cursor:pointer}
 .city-info{position:fixed;z-index:12;left:14px;right:14px;top:110px;max-width:420px;background:#101b26f2;border:1px solid #ffffff26;border-radius:14px;padding:12px 14px;box-shadow:0 10px 30px #0006;display:none}
 .city-info .close{position:absolute;right:10px;top:7px;font-size:20px;color:#aebbc5;cursor:pointer}
@@ -204,8 +204,8 @@ function updateTerritoryStyle(){
  const screenRadius=cityScreenRadius(currentTransform.k);
  cityRoot.selectAll("circle.city-seed")
   .attr("r",screenRadius/currentTransform.k)
-  .attr("stroke",screenRadius>=5?"#fff":"none")
-  .attr("stroke-width",screenRadius>=5?1:0);
+  .style("stroke",screenRadius>=5?"#fff":"none")
+  .style("stroke-width",screenRadius>=5?"1px":"0px");
  cityRoot.selectAll("circle.city-hit").attr("r",Math.max(10,screenRadius+4)/currentTransform.k);
  cityLinkRoot.selectAll("line").attr("stroke-width",2/currentTransform.k);
 }
