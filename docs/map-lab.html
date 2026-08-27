@@ -37,14 +37,12 @@ button.active{background:#fff;color:#17222c;border-color:#fff}
 <svg id="map"></svg>
 <div class="panel header">
   <div class="title">WORLD CONQUEST · MAP LAB</div>
-  <div class="sub" id="status">Europe occidentale · 50m · State-like</div>
+  <div class="sub" id="status">Monde · 110m · State-like · LOD auto</div>
 </div>
 <div class="panel toolbar">
-  <div class="row" id="lods">
-    <button data-lod="110">110m</button>
-    <button data-lod="50" class="active">50m</button>
-    <button data-lod="10">10m</button>
-    <span class="badge">niveau de détail</span>
+  <div class="row">
+    <button class="active">LOD auto</button>
+    <span class="badge">110m monde → 50m continent → 10m local</span>
   </div>
   <div class="row" id="styles">
     <button data-style="state" class="active">State-like</button>
@@ -64,138 +62,127 @@ button.active{background:#fff;color:#17222c;border-color:#fff}
 <script>
 const svg=d3.select("#map");
 const root=svg.append("g");
-const mapLayer=root.append("g").attr("class","map-layer");
+const lodLayers={};
 const gameplayLayer=root.append("g").attr("class","gameplay-layer");
-
-// Couleurs de propriétaires fictifs, pas couleurs nationales.
-// Le même propriétaire peut donc contrôler plusieurs pays.
-const ownerByNumeric={
-  "250":"#657bc4", // France
-  "056":"#657bc4", // Belgique = même joueur
-  "276":"#d77b62", // Allemagne
-  "528":"#d77b62", // Pays-Bas = même joueur
-  "380":"#5fa97b", // Italie
-  "724":"#d4a53c", // Espagne
-  "620":"#d4a53c", // Portugal = même joueur
-  "826":"#9d71b8", // Royaume-Uni
-  "756":"#aeb3b5"  // Suisse neutre
-};
-const ownerByA3={
-  FRA:"#657bc4",BEL:"#657bc4",
-  DEU:"#d77b62",NLD:"#d77b62",
-  ITA:"#5fa97b",
-  ESP:"#d4a53c",PRT:"#d4a53c",
-  GBR:"#9d71b8",
-  CHE:"#aeb3b5"
-};
-
+const ownerByNumeric={"250":"#657bc4","056":"#657bc4","276":"#d77b62","528":"#d77b62","380":"#5fa97b","724":"#d4a53c","620":"#d4a53c","826":"#9d71b8","756":"#aeb3b5"};
+const ownerByA3={FRA:"#657bc4",BEL:"#657bc4",DEU:"#d77b62",NLD:"#d77b62",ITA:"#5fa97b",ESP:"#d4a53c",PRT:"#d4a53c",GBR:"#9d71b8",CHE:"#aeb3b5"};
 const cities=[
-  ["Paris",2.3522,48.8566,126],["Lyon",4.8357,45.764,83],["Marseille",5.3698,43.2965,59],["Bordeaux",-0.5792,44.8378,41],["Lille",3.0573,50.6292,37],
-  ["Londres",-0.1276,51.5072,94],["Bruxelles",4.3517,50.8503,51],["Amsterdam",4.9041,52.3676,46],["Berlin",13.405,52.52,108],["Munich",11.582,48.1351,67],
-  ["Milan",9.19,45.4642,72],["Rome",12.4964,41.9028,79],["Madrid",-3.7038,40.4168,88],["Barcelone",2.1734,41.3851,61],["Genève",6.1432,46.2044,29]
+["Paris",2.3522,48.8566,126],["Lyon",4.8357,45.764,83],["Marseille",5.3698,43.2965,59],["Bordeaux",-0.5792,44.8378,41],["Lille",3.0573,50.6292,37],
+["Londres",-0.1276,51.5072,94],["Bruxelles",4.3517,50.8503,51],["Amsterdam",4.9041,52.3676,46],["Berlin",13.405,52.52,108],["Munich",11.582,48.1351,67],
+["Milan",9.19,45.4642,72],["Rome",12.4964,41.9028,79],["Madrid",-3.7038,40.4168,88],["Barcelone",2.1734,41.3851,61],["Genève",6.1432,46.2044,29]
 ];
 const routes=[["Lyon","Bruxelles",42,.55],["Munich","Paris",31,.38],["Marseille","Rome",26,.66]];
-let W,H,projection,path,currentLod="50",currentStyle="state",showGameplay=true,showLabels=true;
-const featureCache={};
-const zoom=d3.zoom().scaleExtent([.75,14]).on("zoom",e=>root.attr("transform",e.transform));
-svg.call(zoom);
+let W,H,projection,path,currentLod="110",currentStyle="state",showGameplay=true,showLabels=true,currentTransform=d3.zoomIdentity;
+const featureCache={}, prepared=new Set(), loading=new Map();
 
-function resize(){
-  W=innerWidth;H=innerHeight;
-  svg.attr("viewBox",[0,0,W,H]);
-  projection=d3.geoMercator().center([5.5,47]).scale(Math.min(W,H)*3.05).translate([W/2,H/2]);
-  path=d3.geoPath(projection);
-  redraw();
+function lodForScale(k){return k<2.35?"110":k<5.2?"50":"10"}
+function viewName(k){return k<2.35?"Monde":k<5.2?"Continent":"Régional"}
+function countryFill(d){
+ const numeric=String(d.id??"").padStart(3,"0");
+ if(ownerByNumeric[numeric])return ownerByNumeric[numeric];
+ const p=d.properties||{},a3=p.ADM0_A3||p.ISO_A3||p.SOV_A3||p.GU_A3||"";
+ return ownerByA3[a3]||getComputedStyle(document.body).getPropertyValue("--neutral").trim()||"#bfc2c3";
+}
+function updateStatus(){
+ document.querySelector("#status").textContent=viewName(currentTransform.k)+" · "+currentLod+"m · "+({"state":"State-like","pastel":"Pastel","dark":"Dark"})[currentStyle]+" · LOD auto";
 }
 function setLoading(on,text){
-  const el=document.querySelector("#loading");
-  if(text)el.textContent=text;
-  el.style.display=on?"flex":"none";
-}
-function updateStatus(extra=""){
-  document.querySelector("#status").textContent="Europe occidentale · "+currentLod+"m · "+({"state":"State-like","pastel":"Pastel","dark":"Dark"})[currentStyle]+extra;
-}
-function countryFill(d){
-  const numeric=String(d.id??"").padStart(3,"0");
-  if(ownerByNumeric[numeric])return ownerByNumeric[numeric];
-  const p=d.properties||{};
-  const a3=p.ADM0_A3||p.ISO_A3||p.SOV_A3||p.GU_A3||"";
-  return ownerByA3[a3]||getComputedStyle(document.body).getPropertyValue("--neutral").trim()||"#bfc2c3";
-}
-function redraw(){
-  const features=featureCache[currentLod];
-  if(!features||!path)return;
-  const c=mapLayer.selectAll("path.country").data(features,d=>d.id || d.properties?.ADM0_A3 || d.properties?.ISO_A3 || Math.random());
-  c.join("path").attr("class","country").attr("fill",countryFill).attr("d",path);
-  drawGameplay();
-}
-function drawGameplay(){
-  gameplayLayer.selectAll("*").remove();
-  const by=Object.fromEntries(cities.map(c=>[c[0],c]));
-  routes.forEach(r=>{
-    const a=projection([by[r[0]][1],by[r[0]][2]]),b=projection([by[r[1]][1],by[r[1]][2]]);
-    const mx=(a[0]+b[0])/2,my=(a[1]+b[1])/2-34;
-    gameplayLayer.append("path").attr("class","army-route").attr("d",`M${a[0]},${a[1]} Q${mx},${my} ${b[0]},${b[1]}`);
-    const t=r[3],u=1-t,px=u*u*a[0]+2*u*t*mx+t*t*b[0],py=u*u*a[1]+2*u*t*my+t*t*b[1];
-    gameplayLayer.append("circle").attr("class","army-dot").attr("cx",px).attr("cy",py).attr("r",5.5);
-    gameplayLayer.append("text").attr("class","army-label").attr("x",px+9).attr("y",py+4).text(r[2]+"k");
-  });
-  const c=gameplayLayer.selectAll("g.city").data(cities).enter().append("g").attr("class","city").attr("transform",d=>`translate(${projection([d[1],d[2]])})`);
-  c.append("circle").attr("r",d=>d[3]>=80?6:4.8).attr("fill","#192631");
-  c.append("text").attr("class","city-name").attr("x",8).attr("y",-2).attr("font-size",12).text(d=>d[0]);
-  c.append("text").attr("class","city-value").attr("x",8).attr("y",10).attr("font-size",9).text(d=>d[3]+"k");
-  gameplayLayer.style("display",showGameplay?null:"none");
-  gameplayLayer.selectAll(".city text").style("display",showLabels?null:"none");
+ const el=document.querySelector("#loading");if(text)el.textContent=text;el.style.display=on?"flex":"none";
 }
 async function fetchFeatures(lod){
-  if(lod==="10"){
-    const url="https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_10m_admin_0_countries.geojson";
-    const r=await fetch(url,{cache:"force-cache"});
-    if(!r.ok)throw new Error("Natural Earth 10m HTTP "+r.status);
-    const geo=await r.json();
-    return geo.features;
-  }
-  const r=await fetch("https://cdn.jsdelivr.net/npm/world-atlas@2/countries-"+lod+"m.json",{cache:"force-cache"});
-  if(!r.ok)throw new Error("World Atlas "+lod+"m HTTP "+r.status);
-  const world=await r.json();
-  return topojson.feature(world,world.objects.countries).features;
+ if(featureCache[lod])return featureCache[lod];
+ if(loading.has(lod))return loading.get(lod);
+ const promise=(async()=>{
+   if(lod==="10"){
+     const r=await fetch("https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_10m_admin_0_countries.geojson",{cache:"force-cache"});
+     if(!r.ok)throw new Error("Natural Earth 10m HTTP "+r.status);
+     featureCache[lod]=(await r.json()).features;
+   }else{
+     const r=await fetch("https://cdn.jsdelivr.net/npm/world-atlas@2/countries-"+lod+"m.json",{cache:"force-cache"});
+     if(!r.ok)throw new Error("World Atlas "+lod+"m HTTP "+r.status);
+     const world=await r.json();featureCache[lod]=topojson.feature(world,world.objects.countries).features;
+   }
+   loading.delete(lod);return featureCache[lod];
+ })();
+ loading.set(lod,promise);return promise;
 }
-async function loadLod(lod){
-  currentLod=lod;updateStatus();
-  document.querySelectorAll("[data-lod]").forEach(b=>b.classList.toggle("active",b.dataset.lod===lod));
-  if(!featureCache[lod]){
-    setLoading(true,lod==="10"?"Chargement Natural Earth 10m…\n(plus lourd au premier affichage)":"Chargement de la carte…");
-    try{
-      featureCache[lod]=await fetchFeatures(lod);
-    }catch(e){
-      console.error(e);
-      updateStatus(" · ERREUR");
-      setLoading(false);
-      return;
-    }
-    setLoading(false);
-  }
-  redraw();
+async function prepareLod(lod,foreground=false){
+ if(prepared.has(lod))return;
+ if(foreground)setLoading(true,lod==="10"?"Préparation du détail 10m…":"Préparation de la carte…");
+ try{
+   const features=await fetchFeatures(lod);
+   let layer=lodLayers[lod];
+   if(!layer){
+     layer=lodLayers[lod]=root.insert("g",".gameplay-layer").attr("class","map-layer lod-"+lod).style("display","none");
+   }
+   layer.selectAll("path.country").data(features,d=>d.id||d.properties?.ADM0_A3||d.properties?.ISO_A3).join("path")
+      .attr("class","country").attr("fill",countryFill).attr("d",path);
+   prepared.add(lod);
+ }catch(e){console.error(e);document.querySelector("#status").textContent="Erreur LOD "+lod+"m";}
+ if(foreground)setLoading(false);
 }
-document.querySelectorAll("[data-lod]").forEach(b=>b.onclick=()=>loadLod(b.dataset.lod));
+function showLod(lod){
+ Object.entries(lodLayers).forEach(([key,layer])=>layer.style("display",key===lod?null:"none"));
+ currentLod=lod;updateStatus();
+}
+async function ensureLodForScale(k){
+ const wanted=lodForScale(k);
+ if(wanted===currentLod&&prepared.has(wanted))return;
+ if(!prepared.has(wanted))await prepareLod(wanted,true);
+ showLod(wanted);
+ if(wanted==="110")setTimeout(()=>prepareLod("50"),120);
+ if(wanted==="50")setTimeout(()=>prepareLod("10"),220);
+}
+function drawGameplay(){
+ gameplayLayer.selectAll("*").remove();
+ const by=Object.fromEntries(cities.map(c=>[c[0],c]));
+ routes.forEach(r=>{
+   const a=projection([by[r[0]][1],by[r[0]][2]]),b=projection([by[r[1]][1],by[r[1]][2]]);
+   const mx=(a[0]+b[0])/2,my=(a[1]+b[1])/2-18;
+   gameplayLayer.append("path").attr("class","army-route").attr("d",`M${a[0]},${a[1]} Q${mx},${my} ${b[0]},${b[1]}`);
+   const t=r[3],u=1-t,px=u*u*a[0]+2*u*t*mx+t*t*b[0],py=u*u*a[1]+2*u*t*my+t*t*b[1];
+   gameplayLayer.append("circle").attr("class","army-dot").attr("cx",px).attr("cy",py).attr("r",4.5);
+   gameplayLayer.append("text").attr("class","army-label").attr("x",px+7).attr("y",py+4).text(r[2]+"k");
+ });
+ const c=gameplayLayer.selectAll("g.city").data(cities).enter().append("g").attr("class","city").attr("transform",d=>`translate(${projection([d[1],d[2]])})`);
+ c.append("circle").attr("r",4.6).attr("fill","#192631");
+ c.append("text").attr("class","city-name").attr("x",7).attr("y",-2).attr("font-size",11).text(d=>d[0]);
+ c.append("text").attr("class","city-value").attr("x",7).attr("y",9).attr("font-size",8).text(d=>d[3]+"k");
+ gameplayLayer.style("display",showGameplay?null:"none");
+ gameplayLayer.selectAll(".city text").style("display",showLabels?null:"none");
+}
+async function resize(){
+ W=innerWidth;H=innerHeight;svg.attr("viewBox",[0,0,W,H]);
+ projection=d3.geoNaturalEarth1().fitExtent([[8,70],[W-8,H-100]],{type:"Sphere"});
+ path=d3.geoPath(projection);
+ prepared.clear();
+ Object.values(lodLayers).forEach(l=>l.selectAll("*").remove());
+ drawGameplay();
+ await prepareLod(currentLod,true);showLod(currentLod);
+}
+let lodTimer=null;
+const zoom=d3.zoom().scaleExtent([1,18]).on("zoom",e=>{
+ currentTransform=e.transform;root.attr("transform",e.transform);updateStatus();
+ clearTimeout(lodTimer);lodTimer=setTimeout(()=>ensureLodForScale(e.transform.k),90);
+});
+svg.call(zoom);
+
 document.querySelectorAll("[data-style]").forEach(b=>b.onclick=()=>{
-  currentStyle=b.dataset.style;
-  document.body.className="style-"+currentStyle;
-  document.querySelectorAll("[data-style]").forEach(x=>x.classList.toggle("active",x===b));
-  updateStatus();
-  redraw();
+ currentStyle=b.dataset.style;document.body.className="style-"+currentStyle;
+ document.querySelectorAll("[data-style]").forEach(x=>x.classList.toggle("active",x===b));
+ Object.values(lodLayers).forEach(layer=>layer.selectAll(".country").attr("fill",countryFill));updateStatus();
 });
 document.querySelector("#toggleGameplay").onclick=e=>{
-  showGameplay=!showGameplay;e.target.classList.toggle("active",showGameplay);e.target.textContent="Unités "+(showGameplay?"✓":"✕");
-  gameplayLayer.style("display",showGameplay?null:"none");
+ showGameplay=!showGameplay;e.target.classList.toggle("active",showGameplay);e.target.textContent="Unités "+(showGameplay?"✓":"✕");
+ gameplayLayer.style("display",showGameplay?null:"none");
 };
 document.querySelector("#toggleLabels").onclick=e=>{
-  showLabels=!showLabels;e.target.classList.toggle("active",showLabels);e.target.textContent="Labels "+(showLabels?"✓":"✕");
-  gameplayLayer.selectAll(".city text").style("display",showLabels?null:"none");
+ showLabels=!showLabels;e.target.classList.toggle("active",showLabels);e.target.textContent="Labels "+(showLabels?"✓":"✕");
+ gameplayLayer.selectAll(".city text").style("display",showLabels?null:"none");
 };
-document.querySelector("#reset").onclick=()=>svg.transition().duration(300).call(zoom.transform,d3.zoomIdentity);
-addEventListener("resize",resize);
-resize();loadLod("50");
+document.querySelector("#reset").onclick=()=>svg.transition().duration(350).call(zoom.transform,d3.zoomIdentity);
+addEventListener("resize",()=>{clearTimeout(window.__rz);window.__rz=setTimeout(resize,120)});
+(async()=>{await resize();await ensureLodForScale(1);})();
 </script>
 </body>
 </html>
