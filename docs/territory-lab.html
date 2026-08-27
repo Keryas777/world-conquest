@@ -189,7 +189,7 @@ async function ensureLodForScale(k){
 function territoryInternalOpacity(k){if(k<40)return 0;if(k<45)return .08*((k-40)/5);if(k<60)return .08+.42*((k-45)/15);if(k<80)return .50+.35*((k-60)/20);return .85}
 function cityScreenRadius(k){
  if(k<10)return 0;
- if(k<35)return 2+3*((k-10)/25);
+ if(k<35)return 1+4*((k-10)/25);
  if(k<40)return 5;
  if(k<60)return 5+2*((k-40)/20);
  if(k<100)return 7+4*((k-60)/40);
@@ -202,7 +202,9 @@ function updateTerritoryStyle(){
  cityRoot.attr("display",visible?null:"none");
  cityLinkRoot.attr("display",visible?null:"none");
  const screenRadius=cityScreenRadius(currentTransform.k);
- cityRoot.selectAll("circle.city-seed").attr("r",screenRadius/currentTransform.k);
+ cityRoot.selectAll("circle.city-seed")
+  .attr("r",screenRadius/currentTransform.k)
+  .attr("stroke-width",screenRadius>=5?1:0);
  cityRoot.selectAll("circle.city-hit").attr("r",Math.max(10,screenRadius+4)/currentTransform.k);
  cityLinkRoot.selectAll("line").attr("stroke-width",2/currentTransform.k);
 }
