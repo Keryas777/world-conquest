@@ -27,6 +27,8 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1520;fon
 .city-info .close{position:absolute;right:10px;top:7px;font-size:20px;color:#aebbc5;cursor:pointer}
 .city-info b{font-size:15px}.city-info .meta{font-size:12px;color:#c9d6df;margin-top:2px}.city-info .neighbors{font-size:12px;line-height:1.45;margin-top:8px;max-height:220px;overflow:auto}
 .city-info .foreign{color:#ffcf5a}
+.debug-panel{position:fixed;z-index:13;left:14px;right:14px;bottom:180px;max-height:42vh;background:#07111bf2;border:1px solid #ffffff26;border-radius:14px;padding:10px 12px;display:none;box-shadow:0 10px 30px #0007}
+.debug-panel pre{margin:0;white-space:pre-wrap;word-break:break-word;font:11px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace;color:#c9d6df;max-height:36vh;overflow:auto}
 .panel{position:fixed;z-index:10;background:var(--panel);border:1px solid #ffffff26;border-radius:14px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
 .header{left:12px;right:12px;top:max(10px,env(safe-area-inset-top));padding:10px 12px}
 .title{font-weight:900;font-size:15px;letter-spacing:.2px}.sub{font-size:11px;color:#c9d6df;margin-top:2px}
@@ -62,10 +64,12 @@ button.active{background:#fff;color:#17222c;border-color:#fff}
   </div>
   <div class="row">
     <button id="toggle-cities" class="active">Villes ✓</button>
+    <button id="toggle-debug">Debug</button>
     <button id="reset">Recentrer</button>
   </div>
 </div>
 <div class="city-info" id="city-info"><div class="close" id="city-info-close">×</div><div id="city-info-content"></div></div>
+<div class="debug-panel" id="debug-panel"><pre id="debug-content">Aucune ville sélectionnée.</pre></div>
 <div id="loading">Chargement de la carte…</div>
 <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
@@ -79,7 +83,7 @@ const borderRoot=mapRoot.append("g").attr("class","border-root");
 const cityLinkRoot=mapRoot.append("g").attr("class","city-link-layer");
 const cityRoot=mapRoot.append("g").attr("class","city-layer");
 const lodLayers={},borderLayers={};
-let territoryData=null,citiesVisible=true,cityById=new Map(),neighborMap=new Map(),selectedCityId=null;
+let territoryData=null,citiesVisible=true,debugVisible=false,cityById=new Map(),neighborMap=new Map(),selectedCityId=null;
 const territoryColors={FR:"#657bc4",BE:"#d6a84f",LU:"#a874b8",DE:"#d77b62",CH:"#aeb3b5",IT:"#5fa97b",ES:"#d4a53c"};
 let W,H,projection,path,currentLod="110",currentStyle="state",currentTransform=d3.zoomIdentity;
 const featureCache={}, prepared=new Set(), loading=new Map();
@@ -226,8 +230,48 @@ function drawTerritories(){if(!territoryData||!path)return;territoryFillRoot.sel
   .attr("cy",d=>projection([d.lon,d.lat])[1])
   .on("click",(event,d)=>{event.stopPropagation();showCityInfo(d);});
  updateTerritoryStyle()}
+function updateDebugPanel(){
+ const pre=document.querySelector("#debug-content");
+ if(!pre)return;
+ if(!selectedCityId){
+  pre.textContent=[
+   "Territory Lab debug",
+   "zoom="+currentTransform.k.toFixed(2),
+   "lod="+currentLod+"m",
+   "cells="+(territoryData?.cells?.length??0),
+   "edges="+(territoryData?.edges?.length??0),
+   "",
+   "Aucune ville sélectionnée."
+  ].join("\n");
+  return;
+ }
+ const city=cityById.get(selectedCityId);
+ if(!city){pre.textContent="Ville sélectionnée introuvable.";return;}
+ const list=(neighborMap.get(city.id)||[]).slice().sort((a,b)=>a.km-b.km);
+ const foreign=list.filter(e=>e.foreign);
+ const areaKm2=city.geometry?d3.geoArea(city.geometry)*6371.0088*6371.0088:0;
+ const lines=[
+  "Territory Lab debug",
+  "zoom="+currentTransform.k.toFixed(2)+" | lod="+currentLod+"m",
+  "",
+  "cityId="+city.id,
+  "name="+city.name+" | country="+city.country,
+  "lat="+city.lat+" | lon="+city.lon,
+  "population="+city.population,
+  "geometry="+(city.geometry?.type??"null"),
+  "area≈"+areaKm2.toFixed(1)+" km²",
+  "neighbors="+list.length+" | foreign="+foreign.length,
+  ""
+ ];
+ for(const e of list){
+  const o=cityById.get(e.other);
+  lines.push((e.foreign?"FOREIGN ":"INTERNAL")+" -> "+(o?.name??e.other)+" ["+e.other+"] "+e.km+" km");
+ }
+ pre.textContent=lines.join("\n");
+}
 function showCityInfo(city){
  selectedCityId=city.id;
+ updateDebugPanel();
  const list=(neighborMap.get(city.id)||[]).slice().sort((a,b)=>a.km-b.km);
  const foreign=list.filter(e=>e.foreign);
  const rows=list.map(e=>{
@@ -253,6 +297,7 @@ function showCityInfo(city){
 }
 function closeCityInfo(){
  selectedCityId=null;
+ updateDebugPanel();
  document.querySelector("#city-info").style.display="none";
  cityLinkRoot.selectAll("*").remove();
 }
@@ -270,11 +315,19 @@ async function resize(){
 }
 let lodTimer=null;
 const zoom=d3.zoom().scaleExtent([1,200]).on("zoom",e=>{
- currentTransform=e.transform;mapRoot.attr("transform",e.transform);updateTerritoryStyle();updateStatus();
+ currentTransform=e.transform;mapRoot.attr("transform",e.transform);updateTerritoryStyle();updateStatus();if(debugVisible)updateDebugPanel();
  clearTimeout(lodTimer);lodTimer=setTimeout(()=>ensureLodForScale(e.transform.k),90);
 });
 svg.call(zoom);
 
+document.querySelector("#toggle-debug").onclick=()=>{
+ debugVisible=!debugVisible;
+ const b=document.querySelector("#toggle-debug");
+ b.classList.toggle("active",debugVisible);
+ b.textContent=debugVisible?"Debug ✓":"Debug";
+ document.querySelector("#debug-panel").style.display=debugVisible?"block":"none";
+ updateDebugPanel();
+};
 document.querySelector("#toggle-cities").onclick=()=>{
  citiesVisible=!citiesVisible;
  const b=document.querySelector("#toggle-cities");
