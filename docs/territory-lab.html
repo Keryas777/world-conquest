@@ -21,7 +21,12 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1520;fon
 .territory-cell{stroke:none}
 .territory-internal-layer path{fill:none;stroke:#fff;stroke-width:.55;vector-effect:non-scaling-stroke}
 .city-layer{pointer-events:none}
-.city-seed{fill:#17222c;stroke:#fff;stroke-width:1;vector-effect:non-scaling-stroke}
+.city-seed{fill:#17222c;stroke:#fff;stroke-width:1;vector-effect:non-scaling-stroke;pointer-events:none}
+.city-hit{fill:transparent;stroke:none;pointer-events:all;cursor:pointer}
+.city-info{position:fixed;z-index:12;left:14px;right:14px;top:110px;max-width:420px;background:#101b26f2;border:1px solid #ffffff26;border-radius:14px;padding:12px 14px;box-shadow:0 10px 30px #0006;display:none}
+.city-info .close{position:absolute;right:10px;top:7px;font-size:20px;color:#aebbc5;cursor:pointer}
+.city-info b{font-size:15px}.city-info .meta{font-size:12px;color:#c9d6df;margin-top:2px}.city-info .neighbors{font-size:12px;line-height:1.45;margin-top:8px;max-height:220px;overflow:auto}
+.city-info .foreign{color:#ffcf5a}
 .panel{position:fixed;z-index:10;background:var(--panel);border:1px solid #ffffff26;border-radius:14px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
 .header{left:12px;right:12px;top:max(10px,env(safe-area-inset-top));padding:10px 12px}
 .title{font-weight:900;font-size:15px;letter-spacing:.2px}.sub{font-size:11px;color:#c9d6df;margin-top:2px}
@@ -60,6 +65,7 @@ button.active{background:#fff;color:#17222c;border-color:#fff}
     <button id="reset">Recentrer</button>
   </div>
 </div>
+<div class="city-info" id="city-info"><div class="close" id="city-info-close">×</div><div id="city-info-content"></div></div>
 <div id="loading">Chargement de la carte…</div>
 <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
@@ -70,9 +76,10 @@ const fillRoot=mapRoot.append("g").attr("class","fill-root");
 const territoryFillRoot=mapRoot.append("g").attr("class","territory-fill-layer");
 const territoryInternalRoot=mapRoot.append("g").attr("class","territory-internal-layer");
 const borderRoot=mapRoot.append("g").attr("class","border-root");
+const cityLinkRoot=mapRoot.append("g").attr("class","city-link-layer");
 const cityRoot=mapRoot.append("g").attr("class","city-layer");
 const lodLayers={},borderLayers={};
-let territoryData=null,citiesVisible=true;
+let territoryData=null,citiesVisible=true,cityById=new Map(),neighborMap=new Map(),selectedCityId=null;
 const territoryColors={FR:"#657bc4",BE:"#d6a84f",LU:"#a874b8",DE:"#d77b62",CH:"#aeb3b5",IT:"#5fa97b",ES:"#d4a53c"};
 let W,H,projection,path,currentLod="110",currentStyle="state",currentTransform=d3.zoomIdentity;
 const featureCache={}, prepared=new Set(), loading=new Map();
@@ -181,6 +188,8 @@ async function ensureLodForScale(k){
 }
 function territoryInternalOpacity(k){if(k<40)return 0;if(k<45)return .08*((k-40)/5);if(k<60)return .08+.42*((k-45)/15);if(k<80)return .50+.35*((k-60)/20);return .85}
 function cityScreenRadius(k){
+ if(k<10)return 0;
+ if(k<35)return 2+3*((k-10)/25);
  if(k<40)return 5;
  if(k<60)return 5+2*((k-40)/20);
  if(k<100)return 7+4*((k-60)/40);
@@ -189,17 +198,62 @@ function cityScreenRadius(k){
 }
 function updateTerritoryStyle(){
  territoryInternalRoot.attr("opacity",territoryInternalOpacity(currentTransform.k));
- cityRoot.attr("display",citiesVisible?null:"none");
+ const visible=citiesVisible&&currentTransform.k>=10;
+ cityRoot.attr("display",visible?null:"none");
+ cityLinkRoot.attr("display",visible?null:"none");
  const screenRadius=cityScreenRadius(currentTransform.k);
- cityRoot.selectAll("circle").attr("r",screenRadius/currentTransform.k);
+ cityRoot.selectAll("circle.city-seed").attr("r",screenRadius/currentTransform.k);
+ cityRoot.selectAll("circle.city-hit").attr("r",Math.max(10,screenRadius+4)/currentTransform.k);
+ cityLinkRoot.selectAll("line").attr("stroke-width",2/currentTransform.k);
 }
 function drawTerritories(){if(!territoryData||!path)return;territoryFillRoot.selectAll("path.territory-cell").data(territoryData.cells,d=>d.id).join("path").attr("class","territory-cell").attr("fill",d=>territoryColors[d.country]||"#9aa0a6").attr("d",d=>d.geometry?path(d.geometry):null);territoryInternalRoot.selectAll("path").data(territoryData.cells,d=>d.id).join("path").attr("d",d=>d.geometry?path(d.geometry):null);
+ cityById=new Map(territoryData.cells.map(d=>[d.id,d]));
+ neighborMap=new Map(territoryData.cells.map(d=>[d.id,[]]));
+ for(const e of (territoryData.edges||[])){
+  if(neighborMap.has(e.a))neighborMap.get(e.a).push({...e,other:e.b});
+  if(neighborMap.has(e.b))neighborMap.get(e.b).push({...e,other:e.a});
+ }
  cityRoot.selectAll("circle.city-seed").data(territoryData.cells,d=>d.id).join("circle")
   .attr("class","city-seed")
   .attr("cx",d=>projection([d.lon,d.lat])[0])
+  .attr("cy",d=>projection([d.lon,d.lat])[1]);
+ cityRoot.selectAll("circle.city-hit").data(territoryData.cells,d=>d.id).join("circle")
+  .attr("class","city-hit")
+  .attr("cx",d=>projection([d.lon,d.lat])[0])
   .attr("cy",d=>projection([d.lon,d.lat])[1])
-  .append("title").text(d=>d.name+" ("+d.country+") — germe de la cellule");
+  .on("click",(event,d)=>{event.stopPropagation();showCityInfo(d);});
  updateTerritoryStyle()}
+function showCityInfo(city){
+ selectedCityId=city.id;
+ const list=(neighborMap.get(city.id)||[]).slice().sort((a,b)=>a.km-b.km);
+ const foreign=list.filter(e=>e.foreign);
+ const rows=list.map(e=>{
+  const o=cityById.get(e.other);
+  if(!o)return "";
+  return '<div class="'+(e.foreign?'foreign':'')+'">'+o.name+' ('+o.country+') — '+e.km+' km</div>';
+ }).join("");
+ document.querySelector("#city-info-content").innerHTML=
+  '<b>'+city.name+' ('+city.country+')</b>'+
+  '<div class="meta">'+Number(city.population).toLocaleString("fr-FR")+' hab.</div>'+
+  '<div class="meta"><b>'+list.length+'</b> voisin(s) terrestre(s), <b>'+foreign.length+'</b> étranger(s)</div>'+
+  '<div class="neighbors">'+rows+'</div>';
+ document.querySelector("#city-info").style.display="block";
+ cityLinkRoot.selectAll("*").remove();
+ for(const e of list){
+  const o=cityById.get(e.other);if(!o)continue;
+  const a=projection([city.lon,city.lat]),b=projection([o.lon,o.lat]);
+  cityLinkRoot.append("line")
+   .attr("x1",a[0]).attr("y1",a[1]).attr("x2",b[0]).attr("y2",b[1])
+   .attr("stroke",e.foreign?"#ffcf5a":"#9ca3af").attr("opacity",.9);
+ }
+ updateTerritoryStyle();
+}
+function closeCityInfo(){
+ selectedCityId=null;
+ document.querySelector("#city-info").style.display="none";
+ cityLinkRoot.selectAll("*").remove();
+}
+document.querySelector("#city-info-close").onclick=closeCityInfo;
 async function loadTerritories(){try{const r=await fetch("voronoi-graph.json",{cache:"no-cache"});if(!r.ok)throw new Error("voronoi-graph HTTP "+r.status);territoryData=await r.json();drawTerritories();updateStatus()}catch(e){console.error(e);document.querySelector("#status").textContent="Erreur couche territoriale"}}
 async function resize(){
  W=innerWidth;H=innerHeight;svg.attr("viewBox",[0,0,W,H]);
