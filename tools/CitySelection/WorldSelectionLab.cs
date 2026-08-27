@@ -211,65 +211,92 @@ static class WorldSelectionLab
         double thresholdKm)
     {
         var changes = new List<object>();
+        var unresolved = new HashSet<(long A, long B)>();
         const int maxPasses = 2000;
 
         for (var pass = 0; pass < maxPasses; pass++)
         {
             var all = selected.Values.SelectMany(x => x).ToList();
-            var conflict = FindCrossBorderPairs(all, thresholdKm).FirstOrDefault();
+            var conflicts = FindCrossBorderPairs(all, thresholdKm);
+            var conflict = conflicts.FirstOrDefault(x =>
+            {
+                var key = (Math.Min(x.A.Id, x.B.Id), Math.Max(x.A.Id, x.B.Id));
+                return !unresolved.Contains(key);
+            });
+
             if (conflict.A is null || conflict.B is null) break;
 
-            // Preserve the more important city. Population is deliberately the
-            // deterministic tie-breaker here; the losing country's quota is kept.
-            var keep = conflict.A.Population >= conflict.B.Population ? conflict.A : conflict.B;
-            var remove = keep.Id == conflict.A.Id ? conflict.B : conflict.A;
-            var countryList = selected[remove.Country];
-            var selectedIds = all.Select(x => x.Id).ToHashSet();
+            // Try replacing the less populous endpoint first. If that country's
+            // quota cannot be preserved with a valid candidate, try the other side
+            // before classifying this particular pair as irreducible.
+            var attempts = conflict.A.Population >= conflict.B.Population
+                ? new[] { (Keep: conflict.A, Remove: conflict.B), (Keep: conflict.B, Remove: conflict.A) }
+                : new[] { (Keep: conflict.B, Remove: conflict.A), (Keep: conflict.A, Remove: conflict.B) };
 
-            City? replacement = null;
-            double bestScore = double.NegativeInfinity;
-            var maxPop = Math.Max(1L, candidates[remove.Country].Max(x => x.Population));
-
-            foreach (var candidate in candidates[remove.Country])
+            var resolved = false;
+            foreach (var attempt in attempts)
             {
-                if (selectedIds.Contains(candidate.Id)) continue;
-                if (all.Any(x => x.Country != candidate.Country && Geo.Km(candidate, x) < thresholdKm)) continue;
+                var keep = attempt.Keep;
+                var remove = attempt.Remove;
+                var countryList = selected[remove.Country];
+                var selectedIds = all.Select(x => x.Id).ToHashSet();
 
-                var sameCountry = countryList.Where(x => x.Id != remove.Id).ToList();
-                var nearest = sameCountry.Count == 0 ? 1000.0 : sameCountry.Min(x => Geo.Km(candidate, x));
-                var popScore = Math.Log10(candidate.Population + 10.0) / Math.Log10(maxPop + 10.0);
-                var coverageScore = Math.Min(1.0, nearest / 250.0);
-                var score = PopulationWeight * popScore + (1 - PopulationWeight) * coverageScore;
+                City? replacement = null;
+                double bestScore = double.NegativeInfinity;
+                var maxPop = Math.Max(1L, candidates[remove.Country].Max(x => x.Population));
 
-                if (score > bestScore)
+                foreach (var candidate in candidates[remove.Country])
                 {
-                    bestScore = score;
-                    replacement = candidate;
-                }
-            }
+                    if (selectedIds.Contains(candidate.Id)) continue;
+                    if (all.Any(x => x.Id != remove.Id && x.Country != candidate.Country &&
+                                     Geo.Km(candidate, x) < thresholdKm)) continue;
 
-            if (replacement is null)
-            {
-                Console.WriteLine(
-                    $"25 km spacing unresolved: {conflict.A.Name} ({conflict.A.Country}) / " +
-                    $"{conflict.B.Name} ({conflict.B.Country})");
+                    var sameCountry = countryList.Where(x => x.Id != remove.Id).ToList();
+                    var nearest = sameCountry.Count == 0 ? 1000.0 : sameCountry.Min(x => Geo.Km(candidate, x));
+                    var popScore = Math.Log10(candidate.Population + 10.0) / Math.Log10(maxPop + 10.0);
+                    var coverageScore = Math.Min(1.0, nearest / 250.0);
+                    var score = PopulationWeight * popScore + (1 - PopulationWeight) * coverageScore;
+
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        replacement = candidate;
+                    }
+                }
+
+                if (replacement is null) continue;
+
+                countryList.RemoveAll(x => x.Id == remove.Id);
+                countryList.Add(replacement);
+                changes.Add(new
+                {
+                    removedId = remove.Id,
+                    removedName = remove.Name,
+                    country = remove.Country,
+                    keptId = keep.Id,
+                    keptName = keep.Name,
+                    replacementId = replacement.Id,
+                    replacementName = replacement.Name,
+                    originalConflictKm = Math.Round(conflict.Km, 2)
+                });
+                resolved = true;
                 break;
             }
 
-            countryList.RemoveAll(x => x.Id == remove.Id);
-            countryList.Add(replacement);
-            changes.Add(new
+            if (!resolved)
             {
-                removedId = remove.Id,
-                removedName = remove.Name,
-                country = remove.Country,
-                keptId = keep.Id,
-                keptName = keep.Name,
-                replacementId = replacement.Id,
-                replacementName = replacement.Name,
-                originalConflictKm = Math.Round(conflict.Km, 2)
-            });
+                var key = (Math.Min(conflict.A.Id, conflict.B.Id), Math.Max(conflict.A.Id, conflict.B.Id));
+                unresolved.Add(key);
+                Console.WriteLine(
+                    $"25 km spacing irreducible: {conflict.A.Name} ({conflict.A.Country}) / " +
+                    $"{conflict.B.Name} ({conflict.B.Country}) : {conflict.Km:F1} km");
+            }
         }
+
+        var remaining = FindCrossBorderPairs(selected.Values.SelectMany(x => x).ToList(), thresholdKm);
+        Console.WriteLine(
+            $"25 km spacing final: {changes.Count} replacement(s), " +
+            $"{remaining.Count} remaining pair(s), {unresolved.Count} classified irreducible.");
 
         return changes;
     }
