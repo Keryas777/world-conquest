@@ -20,6 +20,8 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1520;fon
 .territory-fill-layer,.territory-internal-layer{pointer-events:none}
 .territory-cell{stroke:none}
 .territory-internal-layer path{fill:none;stroke:#fff;stroke-width:.55;vector-effect:non-scaling-stroke}
+.city-layer{pointer-events:none}
+.city-seed{fill:#17222c;stroke:#fff;stroke-width:1;vector-effect:non-scaling-stroke}
 .panel{position:fixed;z-index:10;background:var(--panel);border:1px solid #ffffff26;border-radius:14px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
 .header{left:12px;right:12px;top:max(10px,env(safe-area-inset-top));padding:10px 12px}
 .title{font-weight:900;font-size:15px;letter-spacing:.2px}.sub{font-size:11px;color:#c9d6df;margin-top:2px}
@@ -54,6 +56,7 @@ button.active{background:#fff;color:#17222c;border-color:#fff}
     <span class="badge">style</span>
   </div>
   <div class="row">
+    <button id="toggle-cities" class="active">Villes ✓</button>
     <button id="reset">Recentrer</button>
   </div>
 </div>
@@ -67,8 +70,9 @@ const fillRoot=mapRoot.append("g").attr("class","fill-root");
 const territoryFillRoot=mapRoot.append("g").attr("class","territory-fill-layer");
 const territoryInternalRoot=mapRoot.append("g").attr("class","territory-internal-layer");
 const borderRoot=mapRoot.append("g").attr("class","border-root");
+const cityRoot=mapRoot.append("g").attr("class","city-layer");
 const lodLayers={},borderLayers={};
-let territoryData=null;
+let territoryData=null,citiesVisible=true;
 const territoryColors={FR:"#657bc4",BE:"#d6a84f",LU:"#a874b8",DE:"#d77b62",CH:"#aeb3b5",IT:"#5fa97b",ES:"#d4a53c"};
 let W,H,projection,path,currentLod="110",currentStyle="state",currentTransform=d3.zoomIdentity;
 const featureCache={}, prepared=new Set(), loading=new Map();
@@ -176,8 +180,18 @@ async function ensureLodForScale(k){
  showLod(wanted);
 }
 function territoryInternalOpacity(k){if(k<40)return 0;if(k<45)return .08*((k-40)/5);if(k<60)return .08+.42*((k-45)/15);if(k<80)return .50+.35*((k-60)/20);return .85}
-function updateTerritoryStyle(){territoryInternalRoot.attr("opacity",territoryInternalOpacity(currentTransform.k))}
-function drawTerritories(){if(!territoryData||!path)return;territoryFillRoot.selectAll("path.territory-cell").data(territoryData.cells,d=>d.id).join("path").attr("class","territory-cell").attr("fill",d=>territoryColors[d.country]||"#9aa0a6").attr("d",d=>d.geometry?path(d.geometry):null);territoryInternalRoot.selectAll("path").data(territoryData.cells,d=>d.id).join("path").attr("d",d=>d.geometry?path(d.geometry):null);updateTerritoryStyle()}
+function updateTerritoryStyle(){
+ territoryInternalRoot.attr("opacity",territoryInternalOpacity(currentTransform.k));
+ cityRoot.attr("display",citiesVisible?null:"none");
+ cityRoot.selectAll("circle").attr("r",Math.max(2.2,4.5/currentTransform.k));
+}
+function drawTerritories(){if(!territoryData||!path)return;territoryFillRoot.selectAll("path.territory-cell").data(territoryData.cells,d=>d.id).join("path").attr("class","territory-cell").attr("fill",d=>territoryColors[d.country]||"#9aa0a6").attr("d",d=>d.geometry?path(d.geometry):null);territoryInternalRoot.selectAll("path").data(territoryData.cells,d=>d.id).join("path").attr("d",d=>d.geometry?path(d.geometry):null);
+ cityRoot.selectAll("circle.city-seed").data(territoryData.cells,d=>d.id).join("circle")
+  .attr("class","city-seed")
+  .attr("cx",d=>projection([d.lon,d.lat])[0])
+  .attr("cy",d=>projection([d.lon,d.lat])[1])
+  .append("title").text(d=>d.name+" ("+d.country+") — germe de la cellule");
+ updateTerritoryStyle()}
 async function loadTerritories(){try{const r=await fetch("voronoi-graph.json",{cache:"no-cache"});if(!r.ok)throw new Error("voronoi-graph HTTP "+r.status);territoryData=await r.json();drawTerritories();updateStatus()}catch(e){console.error(e);document.querySelector("#status").textContent="Erreur couche territoriale"}}
 async function resize(){
  W=innerWidth;H=innerHeight;svg.attr("viewBox",[0,0,W,H]);
@@ -196,6 +210,13 @@ const zoom=d3.zoom().scaleExtent([1,200]).on("zoom",e=>{
 });
 svg.call(zoom);
 
+document.querySelector("#toggle-cities").onclick=()=>{
+ citiesVisible=!citiesVisible;
+ const b=document.querySelector("#toggle-cities");
+ b.classList.toggle("active",citiesVisible);
+ b.textContent=citiesVisible?"Villes ✓":"Villes";
+ updateTerritoryStyle();
+};
 document.querySelectorAll("[data-style]").forEach(b=>b.onclick=()=>{
  currentStyle=b.dataset.style;document.body.className="style-"+currentStyle;
  document.querySelectorAll("[data-style]").forEach(x=>x.classList.toggle("active",x===b));
