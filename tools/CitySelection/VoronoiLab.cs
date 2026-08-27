@@ -38,106 +38,89 @@ static class VoronoiLab
         var cities = selected.Values.SelectMany(x => x).ToList();
         var referenceLat = cities.Average(c => c.Lat) * Math.PI / 180.0;
         var cosLat = Math.Cos(referenceLat);
-        var pts = cities.Select(c => new Pt(c.Lon * cosLat, c.Lat)).ToList();
 
-        var minX = pts.Min(p => p.X);
-        var maxX = pts.Max(p => p.X);
-        var minY = pts.Min(p => p.Y);
-        var maxY = pts.Max(p => p.Y);
-        var padX = Math.Max(1.5, (maxX - minX) * .08);
-        var padY = Math.Max(1.5, (maxY - minY) * .08);
-        minX -= padX; maxX += padX; minY -= padY; maxY += padY;
+        // Canonical initial territories: each country's cities partition only that
+        // country's current Natural Earth 10m territory. This guarantees that at T0
+        // the union of a country's cells reconstructs its present-day border/coastline.
+        var countryTerritories = await LoadCountryTerritoriesAsync(http, quotas.Keys);
+        var clippedCells = Enumerable.Repeat<Geometry>(GeometryFactory.CreatePolygon(), cities.Count).ToList();
 
-        var cells = new List<List<Pt>>(cities.Count);
-        var rawAdjacency = new HashSet<(int A, int B)>();
+        var globalIndexById = cities
+            .Select((city, index) => (city.Id, index))
+            .ToDictionary(x => x.Id, x => x.index);
 
-        for (var i = 0; i < pts.Count; i++)
+        foreach (var (countryCode, countryCities) in selected)
         {
-            var poly = new List<Pt>
+            if (!countryTerritories.TryGetValue(countryCode, out var countryGeometry))
+                throw new InvalidOperationException($"Missing Natural Earth territory for {countryCode}.");
+
+            var countryPts = countryCities
+                .Select(city => new Pt(city.Lon * cosLat, city.Lat))
+                .ToList();
+
+            var env = countryGeometry.EnvelopeInternal;
+            var minX = env.MinX * cosLat - .5;
+            var maxX = env.MaxX * cosLat + .5;
+            var minY = env.MinY - .5;
+            var maxY = env.MaxY + .5;
+
+            for (var localIndex = 0; localIndex < countryCities.Count; localIndex++)
             {
-                new(minX, minY), new(maxX, minY),
-                new(maxX, maxY), new(minX, maxY)
-            };
-
-            for (var j = 0; j < pts.Count && poly.Count > 0; j++)
-            {
-                if (i == j) continue;
-                poly = ClipCloserTo(poly, pts[i], pts[j]);
-            }
-
-            cells.Add(poly);
-
-            const double eps = 1e-7;
-            for (var j = 0; j < pts.Count; j++)
-            {
-                if (i == j) continue;
-                var a = pts[j].X - pts[i].X;
-                var b = pts[j].Y - pts[i].Y;
-                var c = (pts[j].X * pts[j].X + pts[j].Y * pts[j].Y
-                       - pts[i].X * pts[i].X - pts[i].Y * pts[i].Y) / 2.0;
-                var scale = Math.Max(1.0, Math.Sqrt(a * a + b * b));
-                var tol = eps * scale;
-
-                for (var k = 0; k < poly.Count; k++)
+                var poly = new List<Pt>
                 {
-                    var p = poly[k];
-                    var q = poly[(k + 1) % poly.Count];
-                    var dp = Math.Abs(a * p.X + b * p.Y - c);
-                    var dq = Math.Abs(a * q.X + b * q.Y - c);
-                    var len = Math.Sqrt(Math.Pow(p.X - q.X, 2) + Math.Pow(p.Y - q.Y, 2));
-                    if (dp <= tol && dq <= tol && len > 1e-6)
-                    {
-                        rawAdjacency.Add((Math.Min(i, j), Math.Max(i, j)));
-                        break;
-                    }
+                    new(minX, minY), new(maxX, minY),
+                    new(maxX, maxY), new(minX, maxY)
+                };
+
+                for (var j = 0; j < countryPts.Count && poly.Count > 0; j++)
+                {
+                    if (localIndex == j) continue;
+                    poly = ClipCloserTo(poly, countryPts[localIndex], countryPts[j]);
                 }
+
+                var rawCell = ToPolygon(poly, cosLat);
+                Geometry clipped;
+                try
+                {
+                    clipped = rawCell.Intersection(countryGeometry);
+                }
+                catch
+                {
+                    clipped = rawCell.Buffer(0).Intersection(countryGeometry.Buffer(0));
+                }
+
+                if (!clipped.IsValid) clipped = clipped.Buffer(0);
+                clippedCells[globalIndexById[countryCities[localIndex].Id]] = clipped;
             }
         }
 
-        // The lab only contains seven countries. We use their dissolved Natural Earth
-        // polygons as a study-area land mask: internal historical borders disappear,
-        // coastlines/islands remain, and cells cannot flood the sea or unmodelled countries.
-        var studyArea = await LoadStudyAreaAsync(http, quotas.Keys);
-
-        var clippedCells = new List<Geometry>(cities.Count);
-        for (var i = 0; i < cells.Count; i++)
-        {
-            var rawCell = ToPolygon(cells[i], cosLat);
-            Geometry clipped;
-            try
-            {
-                clipped = rawCell.Intersection(studyArea);
-            }
-            catch
-            {
-                // Defensive cleanup for the rare invalid overlay.
-                clipped = rawCell.Buffer(0).Intersection(studyArea.Buffer(0));
-            }
-
-            clippedCells.Add(clipped);
-        }
-
-        // A raw Voronoi adjacency only remains a terrestrial adjacency if the two
-        // land-clipped cells still share a segment. Water-only contacts disappear.
+        // Rebuild the graph from the final constrained cells themselves.
+        // Same-country contacts are internal edges; different-country contacts are
+        // initial political borders. Corner-only contacts do not create adjacency.
         var adjacency = new HashSet<(int A, int B)>();
-        foreach (var pair in rawAdjacency)
+        for (var i = 0; i < clippedCells.Count; i++)
         {
-            var a = clippedCells[pair.A];
-            var b = clippedCells[pair.B];
-            if (a.IsEmpty || b.IsEmpty) continue;
+            var a = clippedCells[i];
+            if (a.IsEmpty) continue;
 
-            Geometry shared;
-            try
+            for (var j = i + 1; j < clippedCells.Count; j++)
             {
-                shared = a.Boundary.Intersection(b.Boundary);
-            }
-            catch
-            {
-                shared = a.Buffer(0).Boundary.Intersection(b.Buffer(0).Boundary);
-            }
+                var b = clippedCells[j];
+                if (b.IsEmpty || !a.EnvelopeInternal.Intersects(b.EnvelopeInternal)) continue;
 
-            if (!shared.IsEmpty && shared.Length > 1e-6)
-                adjacency.Add(pair);
+                Geometry shared;
+                try
+                {
+                    shared = a.Boundary.Intersection(b.Boundary);
+                }
+                catch
+                {
+                    shared = a.Buffer(0).Boundary.Intersection(b.Buffer(0).Boundary);
+                }
+
+                if (!shared.IsEmpty && shared.Length > 1e-6)
+                    adjacency.Add((i, j));
+            }
         }
 
         var cellPayload = cities.Select((city, i) => new
@@ -176,7 +159,7 @@ html,body,#map{height:100%;margin:0}body{font-family:-apple-system,BlinkMacSyste
 .leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#111b31;color:#eef3ff}
 </style></head><body>
 <div id="map"></div>
-<div class="top"><b>🕸️ Voronoï — maillage implicite des villes</b><div class="muted">{{quotaText}} · 60/40 · cellules découpées aux terres · Natural Earth 50m</div></div>
+<div class="top"><b>🕸️ Voronoï — maillage implicite des villes</b><div class="muted">{{quotaText}} · 60/40 · Voronoï contraint par pays · Natural Earth 10m</div></div>
 <div class="legend">Clique une ville : ses voisins terrestres apparaissent.<br><span style="color:#ffcf5a">— voisin étranger</span> · <span style="color:#9ca3af">— voisin interne</span></div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
@@ -257,8 +240,8 @@ applyZoomStyle();
                     populationWeight,
                     quotas,
                     referenceLat = referenceLat * 180.0 / Math.PI,
-                    mask = "Natural Earth 1:50m dissolved study area",
-                    rawAdjacencyCount = rawAdjacency.Count,
+                    generation = "country-constrained Voronoi",
+                    borderSource = "Natural Earth 1:10m admin-0 countries",
                     terrestrialAdjacencyCount = adjacency.Count,
                     cells = cellPayload,
                     edges = edgePayload
@@ -267,8 +250,8 @@ applyZoomStyle();
 
         var foreignEdges = edgePayload.Count(e => e.foreign);
         Console.WriteLine(
-            $"Voronoi lab: {cities.Count} cells, {rawAdjacency.Count} raw adjacencies, " +
-            $"{edgePayload.Count} terrestrial adjacencies, {foreignEdges} cross-border terrestrial adjacencies");
+            $"Voronoi lab: {cities.Count} country-constrained cells, " +
+            $"{edgePayload.Count} terrestrial adjacencies, {foreignEdges} cross-border adjacencies");
     }
 
     static Polygon ToPolygon(List<Pt> poly, double cosLat)
@@ -330,23 +313,28 @@ applyZoomStyle();
         return null;
     }
 
-    static async Task<Geometry> LoadStudyAreaAsync(HttpClient http, IEnumerable<string> countryCodes)
+    static async Task<Dictionary<string, Geometry>> LoadCountryTerritoriesAsync(
+        HttpClient http,
+        IEnumerable<string> countryCodes)
     {
         var wanted = countryCodes.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var cacheDir = Path.Combine("data", "raw", "natural-earth");
         Directory.CreateDirectory(cacheDir);
-        var path = Path.Combine(cacheDir, "ne_50m_admin_0_countries.geojson");
+        var path = Path.Combine(cacheDir, "ne_10m_admin_0_countries.geojson");
 
         if (!File.Exists(path))
         {
             const string url =
-                "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_admin_0_countries.geojson";
+                "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries.geojson";
             var json = await http.GetStringAsync(url);
             await File.WriteAllTextAsync(path, json);
         }
 
         using var document = JsonDocument.Parse(await File.ReadAllTextAsync(path));
-        var parts = new List<Geometry>();
+        var partsByCountry = wanted.ToDictionary(
+            code => code,
+            _ => new List<Geometry>(),
+            StringComparer.OrdinalIgnoreCase);
 
         foreach (var feature in document.RootElement.GetProperty("features").EnumerateArray())
         {
@@ -356,19 +344,22 @@ applyZoomStyle();
 
             var geometry = ParseGeoJsonGeometry(feature.GetProperty("geometry"));
             if (geometry is not null && !geometry.IsEmpty)
-                parts.Add(geometry);
+                partsByCountry[iso].Add(geometry);
         }
 
-        if (parts.Count == 0)
-            throw new InvalidOperationException("Natural Earth study-area countries were not found.");
+        var result = new Dictionary<string, Geometry>(StringComparer.OrdinalIgnoreCase);
+        foreach (var code in wanted)
+        {
+            var parts = partsByCountry[code];
+            if (parts.Count == 0)
+                throw new InvalidOperationException($"Natural Earth territory not found for {code}.");
 
-        var missing = wanted
-            .Where(code => !parts.Any())
-            .ToArray();
+            var geometry = UnaryUnionOp.Union(parts);
+            if (!geometry.IsValid) geometry = geometry.Buffer(0);
+            result[code] = geometry;
+        }
 
-        var union = UnaryUnionOp.Union(parts);
-        if (!union.IsValid) union = union.Buffer(0);
-        return union;
+        return result;
     }
 
     static string? ReadIso2(JsonElement properties)
