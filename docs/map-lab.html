@@ -14,7 +14,8 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1520;fon
 .country{stroke:none}
 .map-layer{opacity:0;pointer-events:none;transition:opacity 140ms linear;will-change:opacity}
 .map-layer.lod-active{opacity:1}
-.border-layer{fill:none;stroke:var(--border);stroke-width:.75;vector-effect:non-scaling-stroke;pointer-events:none;opacity:0}
+.border-layer{pointer-events:none;opacity:0}
+.border-layer path{fill:none;stroke:var(--border);stroke-width:.75;vector-effect:non-scaling-stroke}
 .border-layer.border-active{opacity:1}
 .city circle{stroke:#fff;stroke-width:1.4;vector-effect:non-scaling-stroke}
 .city text{fill:#fff;font-weight:750;paint-order:stroke;stroke:#16212b;stroke-width:3px;stroke-linejoin:round}
