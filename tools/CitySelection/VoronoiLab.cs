@@ -360,12 +360,15 @@ applyZoomStyle();
         var wanted = countryCodes.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var cacheDir = Path.Combine("data", "raw", "natural-earth");
         Directory.CreateDirectory(cacheDir);
-        var path = Path.Combine(cacheDir, "ne_10m_admin_0_countries.geojson");
+        var path = Path.Combine(cacheDir, "ne_10m_admin_0_countries_iso.geojson");
 
         if (!File.Exists(path))
         {
+            // Use Natural Earth's ISO-normalized admin-0 layer for the worldwide
+            // pipeline. The generic countries layer intentionally merges some
+            // ISO territories (for example BQ) into their sovereign state.
             const string url =
-                "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries.geojson";
+                "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries_iso.geojson";
             var json = await http.GetStringAsync(url);
             await File.WriteAllTextAsync(path, json);
         }
@@ -388,23 +391,36 @@ applyZoomStyle();
         }
 
         var result = new Dictionary<string, Geometry>(StringComparer.OrdinalIgnoreCase);
+        var missing = new List<string>();
+
         foreach (var code in wanted)
         {
             var parts = partsByCountry[code];
             if (parts.Count == 0)
-                throw new InvalidOperationException($"Natural Earth territory not found for {code}.");
+            {
+                missing.Add(code);
+                continue;
+            }
 
             var geometry = UnaryUnionOp.Union(parts);
             if (!geometry.IsValid) geometry = geometry.Buffer(0);
             result[code] = geometry;
         }
 
+        if (missing.Count > 0)
+            throw new InvalidOperationException(
+                "Natural Earth ISO territory mapping missing for: " +
+                string.Join(", ", missing.OrderBy(x => x)));
+
+        Console.WriteLine(
+            $"Natural Earth ISO territories loaded: {result.Count}/{wanted.Count}.");
+
         return result;
     }
 
     static string? ReadIso2(JsonElement properties)
     {
-        foreach (var key in new[] { "ISO_A2", "ISO_A2_EH", "WB_A2" })
+        foreach (var key in new[] { "ISO_A2", "ISO_A2_EH", "WB_A2", "POSTAL" })
         {
             if (!properties.TryGetProperty(key, out var value)) continue;
             var code = value.GetString();
