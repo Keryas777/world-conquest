@@ -10,7 +10,7 @@ static class WorldSelectionLab
 
     static readonly Formula[] Formulas =
     {
-        new("B", .45, .15),
+        // Formula C is the current worldwide working hypothesis.
         new("C", .40, .20)
     };
 
@@ -50,6 +50,9 @@ static class WorldSelectionLab
                 selected[country.Code] = Selector.Select(pool, quota, PopulationWeight);
             }
 
+            var beforeSpacing = selected.Values.SelectMany(x => x).ToList();
+            var initialClosePairs = FindCrossBorderPairs(beforeSpacing, CrossBorderDiagnosticKm);
+            var spacingChanges = ApplyCrossBorderSpacing(selected, candidates, CrossBorderDiagnosticKm);
             var all = selected.Values.SelectMany(x => x).ToList();
             var closePairs = FindCrossBorderPairs(all, CrossBorderDiagnosticKm);
 
@@ -84,7 +87,10 @@ static class WorldSelectionLab
                 crossBorderDiagnosticKm = CrossBorderDiagnosticKm,
                 countryCount = selected.Count,
                 cityCount = all.Count,
+                initialCloseCrossBorderPairCount = initialClosePairs.Count,
                 closeCrossBorderPairCount = closePairs.Count,
+                spacingReplacementCount = spacingChanges.Count,
+                spacingReplacements = spacingChanges,
                 countries = countryRows,
                 closeCrossBorderPairs = closePairs.Select(x => new
                 {
@@ -108,7 +114,8 @@ static class WorldSelectionLab
 
             Console.WriteLine(
                 $"World formula {formula.Id}: {selected.Count} countries, {all.Count:N0} cities, " +
-                $"{closePairs.Count} cross-border pair(s) < {CrossBorderDiagnosticKm:0} km.");
+                $"{initialClosePairs.Count} -> {closePairs.Count} cross-border pair(s) < {CrossBorderDiagnosticKm:0} km, " +
+                $"{spacingChanges.Count} replacement(s).");
 
             foreach (var pair in closePairs.Take(40))
                 Console.WriteLine(
@@ -196,6 +203,75 @@ static class WorldSelectionLab
         }
 
         return result;
+    }
+
+    static List<object> ApplyCrossBorderSpacing(
+        Dictionary<string, List<City>> selected,
+        IReadOnlyDictionary<string, List<City>> candidates,
+        double thresholdKm)
+    {
+        var changes = new List<object>();
+        const int maxPasses = 2000;
+
+        for (var pass = 0; pass < maxPasses; pass++)
+        {
+            var all = selected.Values.SelectMany(x => x).ToList();
+            var conflict = FindCrossBorderPairs(all, thresholdKm).FirstOrDefault();
+            if (conflict.A is null || conflict.B is null) break;
+
+            // Preserve the more important city. Population is deliberately the
+            // deterministic tie-breaker here; the losing country's quota is kept.
+            var keep = conflict.A.Population >= conflict.B.Population ? conflict.A : conflict.B;
+            var remove = keep.Id == conflict.A.Id ? conflict.B : conflict.A;
+            var countryList = selected[remove.Country];
+            var selectedIds = all.Select(x => x.Id).ToHashSet();
+
+            City? replacement = null;
+            double bestScore = double.NegativeInfinity;
+            var maxPop = Math.Max(1L, candidates[remove.Country].Max(x => x.Population));
+
+            foreach (var candidate in candidates[remove.Country])
+            {
+                if (selectedIds.Contains(candidate.Id)) continue;
+                if (all.Any(x => x.Country != candidate.Country && Geo.Km(candidate, x) < thresholdKm)) continue;
+
+                var sameCountry = countryList.Where(x => x.Id != remove.Id).ToList();
+                var nearest = sameCountry.Count == 0 ? 1000.0 : sameCountry.Min(x => Geo.Km(candidate, x));
+                var popScore = Math.Log10(candidate.Population + 10.0) / Math.Log10(maxPop + 10.0);
+                var coverageScore = Math.Min(1.0, nearest / 250.0);
+                var score = PopulationWeight * popScore + (1 - PopulationWeight) * coverageScore;
+
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    replacement = candidate;
+                }
+            }
+
+            if (replacement is null)
+            {
+                Console.WriteLine(
+                    $"25 km spacing unresolved: {conflict.A.Name} ({conflict.A.Country}) / " +
+                    $"{conflict.B.Name} ({conflict.B.Country})");
+                break;
+            }
+
+            countryList.RemoveAll(x => x.Id == remove.Id);
+            countryList.Add(replacement);
+            changes.Add(new
+            {
+                removedId = remove.Id,
+                removedName = remove.Name,
+                country = remove.Country,
+                keptId = keep.Id,
+                keptName = keep.Name,
+                replacementId = replacement.Id,
+                replacementName = replacement.Name,
+                originalConflictKm = Math.Round(conflict.Km, 2)
+            });
+        }
+
+        return changes;
     }
 
     static List<(City A, City B, double Km)> FindCrossBorderPairs(IReadOnlyList<City> cities, double thresholdKm)
