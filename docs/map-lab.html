@@ -61,9 +61,9 @@ button.active{background:#fff;color:#17222c;border-color:#fff}
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
 <script>
 const svg=d3.select("#map");
-const root=svg.append("g");
+const mapRoot=svg.append("g").attr("class","map-root");
+const gameplayLayer=svg.append("g").attr("class","gameplay-layer");
 const lodLayers={};
-const gameplayLayer=root.append("g").attr("class","gameplay-layer");
 const ownerByNumeric={"250":"#657bc4","056":"#657bc4","276":"#d77b62","528":"#d77b62","380":"#5fa97b","724":"#d4a53c","620":"#d4a53c","826":"#9d71b8","756":"#aeb3b5"};
 const ownerByA3={FRA:"#657bc4",BEL:"#657bc4",DEU:"#d77b62",NLD:"#d77b62",ITA:"#5fa97b",ESP:"#d4a53c",PRT:"#d4a53c",GBR:"#9d71b8",CHE:"#aeb3b5"};
 const cities=[
@@ -127,7 +127,7 @@ async function prepareLod(lod,foreground=false){
    const features=await fetchFeatures(lod);
    let layer=lodLayers[lod];
    if(!layer){
-     layer=lodLayers[lod]=root.insert("g",".gameplay-layer").attr("class","map-layer lod-"+lod).style("display","none");
+     layer=lodLayers[lod]=mapRoot.append("g").attr("class","map-layer lod-"+lod).style("display","none");
    }
    layer.selectAll("path.country").data(features,d=>d.id||d.properties?.ADM0_A3||d.properties?.ISO_A3).join("path")
       .attr("class","country").attr("fill",countryFill).attr("d",path);
@@ -147,23 +147,74 @@ async function ensureLodForScale(k){
  if(wanted==="110")setTimeout(()=>prepareLod("50"),120);
  if(wanted==="50")setTimeout(()=>prepareLod("10"),220);
 }
+function screenPoint(city){
+ const p=projection([city[1],city[2]]);
+ return currentTransform.apply(p);
+}
+function gameplayMode(){
+ const k=currentTransform.k;
+ if(k<LOD_UP_110_TO_50)return "world";
+ if(k<LOD_UP_50_TO_10)return "continent";
+ return "regional";
+}
+function labelAllowed(city,mode){
+ if(mode==="world")return false;
+ if(mode==="continent")return city[3]>=35;
+ return true;
+}
+function markerAllowed(city,mode){
+ if(mode==="world")return city[3]>=100;
+ if(mode==="continent")return city[3]>=29;
+ return true;
+}
+function boxesOverlap(a,b,pad=5){
+ return !(a.x2+pad<b.x1 || a.x1-pad>b.x2 || a.y2+pad<b.y1 || a.y1-pad>b.y2);
+}
 function drawGameplay(){
  gameplayLayer.selectAll("*").remove();
+ if(!showGameplay || !projection)return;
+
+ const mode=gameplayMode();
  const by=Object.fromEntries(cities.map(c=>[c[0],c]));
- routes.forEach(r=>{
-   const a=projection([by[r[0]][1],by[r[0]][2]]),b=projection([by[r[1]][1],by[r[1]][2]]);
-   const mx=(a[0]+b[0])/2,my=(a[1]+b[1])/2-18;
-   gameplayLayer.append("path").attr("class","army-route").attr("d",`M${a[0]},${a[1]} Q${mx},${my} ${b[0]},${b[1]}`);
-   const t=r[3],u=1-t,px=u*u*a[0]+2*u*t*mx+t*t*b[0],py=u*u*a[1]+2*u*t*my+t*t*b[1];
-   gameplayLayer.append("circle").attr("class","army-dot").attr("cx",px).attr("cy",py).attr("r",4.5);
-   gameplayLayer.append("text").attr("class","army-label").attr("x",px+7).attr("y",py+4).text(r[2]+"k");
+ const visibleCities=cities.filter(c=>markerAllowed(c,mode));
+
+ // Les routes ne sont utiles qu'à partir de la vue continentale.
+ if(mode!=="world"){
+   routes.forEach(r=>{
+     const a=screenPoint(by[r[0]]),b=screenPoint(by[r[1]]);
+     const mx=(a[0]+b[0])/2,my=(a[1]+b[1])/2-22;
+     gameplayLayer.append("path").attr("class","army-route").attr("d",`M${a[0]},${a[1]} Q${mx},${my} ${b[0]},${b[1]}`);
+     const t=r[3],u=1-t,px=u*u*a[0]+2*u*t*mx+t*t*b[0],py=u*u*a[1]+2*u*t*my+t*t*b[1];
+     gameplayLayer.append("circle").attr("class","army-dot").attr("cx",px).attr("cy",py).attr("r",5);
+     gameplayLayer.append("text").attr("class","army-label").attr("x",px+8).attr("y",py+4).text(r[2]+"k");
+   });
+ }
+
+ // Les marqueurs restent en pixels écran : ils ne grossissent jamais avec la carte.
+ const markerRadius=mode==="world"?3.5:5;
+ visibleCities.forEach(c=>{
+   const p=screenPoint(c);
+   gameplayLayer.append("circle").attr("class","city-dot").attr("cx",p[0]).attr("cy",p[1]).attr("r",markerRadius)
+     .attr("fill","#192631").attr("stroke","#fff").attr("stroke-width",1.5);
  });
- const c=gameplayLayer.selectAll("g.city").data(cities).enter().append("g").attr("class","city").attr("transform",d=>`translate(${projection([d[1],d[2]])})`);
- c.append("circle").attr("r",4.6).attr("fill","#192631");
- c.append("text").attr("class","city-name").attr("x",7).attr("y",-2).attr("font-size",11).text(d=>d[0]);
- c.append("text").attr("class","city-value").attr("x",7).attr("y",9).attr("font-size",8).text(d=>d[3]+"k");
- gameplayLayer.style("display",showGameplay?null:"none");
- gameplayLayer.selectAll(".city text").style("display",showLabels?null:"none");
+
+ if(!showLabels || mode==="world")return;
+
+ // Placement glouton simple des labels, par importance, pour éviter les collisions.
+ const occupied=[];
+ [...visibleCities].sort((a,b)=>b[3]-a[3]).forEach(c=>{
+   if(!labelAllowed(c,mode))return;
+   const p=screenPoint(c), font=12, valueFont=9;
+   const width=Math.max(c[0].length*7.1, String(c[3]).length*5.5+12)+12;
+   const box={x1:p[0]+8,y1:p[1]-15,x2:p[0]+8+width,y2:p[1]+14};
+   if(occupied.some(o=>boxesOverlap(box,o)))return;
+   occupied.push(box);
+   const g=gameplayLayer.append("g").attr("class","city-label");
+   g.append("text").attr("x",p[0]+8).attr("y",p[1]-2).attr("font-size",font)
+     .attr("fill","#fff").attr("font-weight",750).attr("paint-order","stroke").attr("stroke","#16212b").attr("stroke-width",3).text(c[0]);
+   g.append("text").attr("x",p[0]+8).attr("y",p[1]+10).attr("font-size",valueFont)
+     .attr("fill","#fff").attr("font-weight",750).attr("paint-order","stroke").attr("stroke","#16212b").attr("stroke-width",3).text(c[3]+"k");
+ });
 }
 async function resize(){
  W=innerWidth;H=innerHeight;svg.attr("viewBox",[0,0,W,H]);
@@ -176,7 +227,7 @@ async function resize(){
 }
 let lodTimer=null;
 const zoom=d3.zoom().scaleExtent([1,18]).on("zoom",e=>{
- currentTransform=e.transform;root.attr("transform",e.transform);updateStatus();
+ currentTransform=e.transform;mapRoot.attr("transform",e.transform);drawGameplay();updateStatus();
  clearTimeout(lodTimer);lodTimer=setTimeout(()=>ensureLodForScale(e.transform.k),90);
 });
 svg.call(zoom);
@@ -188,11 +239,11 @@ document.querySelectorAll("[data-style]").forEach(b=>b.onclick=()=>{
 });
 document.querySelector("#toggleGameplay").onclick=e=>{
  showGameplay=!showGameplay;e.target.classList.toggle("active",showGameplay);e.target.textContent="Unités "+(showGameplay?"✓":"✕");
- gameplayLayer.style("display",showGameplay?null:"none");
+ drawGameplay();
 };
 document.querySelector("#toggleLabels").onclick=e=>{
  showLabels=!showLabels;e.target.classList.toggle("active",showLabels);e.target.textContent="Labels "+(showLabels?"✓":"✕");
- gameplayLayer.selectAll(".city text").style("display",showLabels?null:"none");
+ drawGameplay();
 };
 document.querySelector("#reset").onclick=()=>svg.transition().duration(350).call(zoom.transform,d3.zoomIdentity);
 addEventListener("resize",()=>{clearTimeout(window.__rz);window.__rz=setTimeout(resize,120)});
