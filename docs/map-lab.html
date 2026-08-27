@@ -11,10 +11,11 @@
 *{box-sizing:border-box}
 html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1520;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text)}
 #map{width:100%;height:100%;display:block;touch-action:none;background:var(--ocean)}
-.country{stroke:transparent;stroke-width:.75;vector-effect:non-scaling-stroke}
-.map-layer.lod-settled .country{stroke:var(--border)}
+.country{stroke:none}
 .map-layer{opacity:0;pointer-events:none;transition:opacity 140ms linear;will-change:opacity}
 .map-layer.lod-active{opacity:1}
+.border-layer{fill:none;stroke:var(--border);stroke-width:.75;vector-effect:non-scaling-stroke;pointer-events:none;opacity:0}
+.border-layer.border-active{opacity:1}
 .city circle{stroke:#fff;stroke-width:1.4;vector-effect:non-scaling-stroke}
 .city text{fill:#fff;font-weight:750;paint-order:stroke;stroke:#16212b;stroke-width:3px;stroke-linejoin:round}
 .army-route{fill:none;stroke:#fff;stroke-width:2.2;stroke-dasharray:4 5;vector-effect:non-scaling-stroke;opacity:.92}
@@ -65,8 +66,10 @@ button.active{background:#fff;color:#17222c;border-color:#fff}
 <script>
 const svg=d3.select("#map");
 const mapRoot=svg.append("g").attr("class","map-root");
+const fillRoot=mapRoot.append("g").attr("class","fill-root");
+const borderRoot=mapRoot.append("g").attr("class","border-root");
 const gameplayLayer=svg.append("g").attr("class","gameplay-layer");
-const lodLayers={};
+const lodLayers={},borderLayers={};
 const ownerByNumeric={"250":"#657bc4","056":"#657bc4","276":"#d77b62","528":"#d77b62","380":"#5fa97b","724":"#d4a53c","620":"#d4a53c","826":"#9d71b8","756":"#aeb3b5"};
 const ownerByA3={FRA:"#657bc4",BEL:"#657bc4",DEU:"#d77b62",NLD:"#d77b62",ITA:"#5fa97b",ESP:"#d4a53c",PRT:"#d4a53c",GBR:"#9d71b8",CHE:"#aeb3b5"};
 const cities=[
@@ -130,32 +133,39 @@ async function prepareLod(lod,foreground=false){
    const features=await fetchFeatures(lod);
    let layer=lodLayers[lod];
    if(!layer){
-     layer=lodLayers[lod]=mapRoot.append("g").attr("class","map-layer lod-"+lod);
+     layer=lodLayers[lod]=fillRoot.append("g").attr("class","map-layer lod-"+lod);
    }
    layer.selectAll("path.country").data(features,d=>d.id||d.properties?.ADM0_A3||d.properties?.ISO_A3).join("path")
       .attr("class","country").attr("fill",countryFill).attr("d",path);
+
+   // Frontières indépendantes des aplats : elles ne participent pas au crossfade.
+   let borders=borderLayers[lod];
+   if(!borders)borders=borderLayers[lod]=borderRoot.append("g").attr("class","border-layer border-"+lod);
+   borders.selectAll("path").data(features,d=>d.id||d.properties?.ADM0_A3||d.properties?.ISO_A3).join("path").attr("d",path);
    prepared.add(lod);
  }catch(e){console.error(e);document.querySelector("#status").textContent="Erreur LOD "+lod+"m";}
  if(foreground)setLoading(false);
 }
 let lodTransitionTimer=null;
 function showLod(lod){
- const next=lodLayers[lod];
- if(!next)return;
-
- // Pendant le fondu, on évite de superposer deux jeux de frontières blanches
- // dont les géométries diffèrent légèrement (source du petit flash blanc sur Safari).
+ const next=lodLayers[lod], nextBorders=borderLayers[lod];
+ if(!next||!nextBorders)return;
  clearTimeout(lodTransitionTimer);
- Object.values(lodLayers).forEach(layer=>layer.classed("lod-settled",false));
+
+ // L'ancien jeu de frontières reste totalement stable pendant le fondu des aplats.
+ const oldLod=currentLod;
+ const oldBorders=borderLayers[oldLod];
+ if(oldBorders)oldBorders.classed("border-active",true);
 
  next.classed("lod-active",true);
  requestAnimationFrame(()=>{
    Object.entries(lodLayers).forEach(([key,layer])=>{
-     if(key!==lod) layer.classed("lod-active",false);
+     if(key!==lod)layer.classed("lod-active",false);
    });
+   // On ne bascule les frontières qu'une fois le nouvel aplat entièrement installé.
    lodTransitionTimer=setTimeout(()=>{
-     next.classed("lod-settled",true);
-   },160);
+     Object.entries(borderLayers).forEach(([key,layer])=>layer.classed("border-active",key===lod));
+   },150);
  });
  currentLod=lod;updateStatus();
 }
@@ -242,8 +252,9 @@ async function resize(){
  path=d3.geoPath(projection);
  prepared.clear();
  Object.values(lodLayers).forEach(l=>l.selectAll("*").remove());
+ Object.values(borderLayers).forEach(l=>l.selectAll("*").remove());
  drawGameplay();
- await prepareLod(currentLod,true);showLod(currentLod); lodLayers[currentLod]?.classed("lod-settled",true);
+ await prepareLod(currentLod,true);showLod(currentLod); borderLayers[currentLod]?.classed("border-active",true);
 }
 let lodTimer=null;
 const zoom=d3.zoom().scaleExtent([1,60]).on("zoom",e=>{
