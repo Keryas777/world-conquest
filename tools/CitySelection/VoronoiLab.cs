@@ -268,6 +268,7 @@ static class VoronoiLab
         var empty = new List<object>();
         var invalid = new List<object>();
         var seedOutside = new List<object>();
+        var seedDiagnostics = new List<object>();
         var lowDegree = new List<object>();
 
         for (var i = 0; i < cities.Count; i++)
@@ -275,25 +276,49 @@ static class VoronoiLab
             var city = cities[i];
             var geometry = cells[i];
 
+            var seed = GeometryFactory.CreatePoint(new Coordinate(city.Lon, city.Lat));
+            var territory = countryTerritories[city.Country];
+            var seedInTerritory = territory.Covers(seed);
+            var distanceToTerritory = seedInTerritory ? 0.0 : territory.Distance(seed);
+
             if (geometry.IsEmpty || geometry.Dimension != Dimension.Surface || geometry.Area <= 0)
-                empty.Add(new { city.Id, city.Name, city.Country });
+                empty.Add(new
+                {
+                    city.Id,
+                    city.Name,
+                    city.Country,
+                    city.Lat,
+                    city.Lon,
+                    seedInTerritory,
+                    distanceToTerritoryDegrees = Math.Round(distanceToTerritory, 6)
+                });
 
             if (!geometry.IsEmpty && !geometry.IsValid)
                 invalid.Add(new { city.Id, city.Name, city.Country });
 
-            if (!geometry.IsEmpty)
+            if (!geometry.IsEmpty && !geometry.Covers(seed))
             {
-                var seed = GeometryFactory.CreatePoint(new Coordinate(city.Lon, city.Lat));
-                if (!geometry.Covers(seed))
-                    seedOutside.Add(new
-                    {
-                        city.Id,
-                        city.Name,
-                        city.Country,
-                        city.Lat,
-                        city.Lon,
-                        distanceToCellDegrees = Math.Round(geometry.Distance(seed), 6)
-                    });
+                var distanceToCell = geometry.Distance(seed);
+                var classification = seedInTerritory
+                    ? "seed_inside_territory_but_outside_cell"
+                    : "seed_outside_territory";
+
+                var diagnostic = new
+                {
+                    city.Id,
+                    city.Name,
+                    city.Country,
+                    city.Lat,
+                    city.Lon,
+                    classification,
+                    seedInTerritory,
+                    distanceToTerritoryDegrees = Math.Round(distanceToTerritory, 6),
+                    distanceToCellDegrees = Math.Round(distanceToCell, 6),
+                    cellAreaDegrees2 = Math.Round(geometry.Area, 8)
+                };
+
+                seedOutside.Add(diagnostic);
+                seedDiagnostics.Add(diagnostic);
             }
 
             if (degree[i] <= 1)
@@ -415,6 +440,20 @@ static class VoronoiLab
             .OrderByDescending(x => x.areaDeltaRatio)
             .ToArray();
 
+        var seedOutsideTerritoryCount = seedDiagnostics.Count(x =>
+        {
+            var json = JsonSerializer.Serialize(x);
+            return json.Contains("\"classification\":\"seed_outside_territory\"", StringComparison.Ordinal);
+        });
+        var seedInsideTerritoryOutsideCellCount = seedDiagnostics.Count - seedOutsideTerritoryCount;
+
+        var emptyOutsideTerritoryCount = empty.Count(x =>
+        {
+            var json = JsonSerializer.Serialize(x);
+            return json.Contains("\"seedInTerritory\":false", StringComparison.Ordinal);
+        });
+        var emptyInsideTerritoryCount = empty.Count - emptyOutsideTerritoryCount;
+
         var maxDegree = degree.Count == 0 ? 0 : degree.Max();
         var meanDegree = degree.Count == 0 ? 0 : degree.Average();
 
@@ -434,6 +473,10 @@ static class VoronoiLab
                 emptyGeometryCount = empty.Count,
                 invalidGeometryCount = invalid.Count,
                 seedOutsideCellCount = seedOutside.Count,
+                seedOutsideTerritoryCount,
+                seedInsideTerritoryOutsideCellCount,
+                emptyCellSeedOutsideTerritoryCount = emptyOutsideTerritoryCount,
+                emptyCellSeedInsideTerritoryCount = emptyInsideTerritoryCount,
                 duplicateCityIdCount = idDuplicates.Length,
                 selfEdgeCount = selfEdges,
                 invalidEdgeIndexCount = invalidEdgeIndices,
@@ -445,6 +488,13 @@ static class VoronoiLab
             emptyGeometries = empty,
             invalidGeometries = invalid,
             seedsOutsideCells = seedOutside,
+            seedDiagnosticSummary = new
+            {
+                outsideTerritory = seedOutsideTerritoryCount,
+                insideTerritoryButOutsideCell = seedInsideTerritoryOutsideCellCount,
+                emptyCellSeedOutsideTerritory = emptyOutsideTerritoryCount,
+                emptyCellSeedInsideTerritory = emptyInsideTerritoryCount
+            },
             duplicateCityIds = idDuplicates,
             connectedComponents = componentSummary,
             territoryCoverageWarnings = coverageWarnings
@@ -469,6 +519,10 @@ static class VoronoiLab
         md.AppendLine($"- Empty geometries: **{empty.Count:N0}**");
         md.AppendLine($"- Invalid geometries: **{invalid.Count:N0}**");
         md.AppendLine($"- Seeds outside their cell: **{seedOutside.Count:N0}**");
+        md.AppendLine($"  - already outside Natural Earth territory: **{seedOutsideTerritoryCount:N0}**");
+        md.AppendLine($"  - inside territory but outside final cell: **{seedInsideTerritoryOutsideCellCount:N0}**");
+        md.AppendLine($"- Empty-cell seeds outside territory: **{emptyOutsideTerritoryCount:N0}**");
+        md.AppendLine($"- Empty-cell seeds inside territory: **{emptyInsideTerritoryCount:N0}**");
         md.AppendLine($"- Duplicate city ids: **{idDuplicates.Length:N0}**");
         md.AppendLine($"- Connected terrestrial components: **{components.Count:N0}**");
         md.AppendLine($"- Territory coverage warnings: **{coverageWarnings.Length:N0}**");
