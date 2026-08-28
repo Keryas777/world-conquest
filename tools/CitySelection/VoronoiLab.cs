@@ -242,9 +242,267 @@ static class VoronoiLab
                 }));
 
         var foreignEdges = edgePayload.Count(e => e.foreign);
+
+        await WriteTerritoryAuditAsync(
+            outDir,
+            cities,
+            clippedCells,
+            adjacency,
+            degree,
+            countryTerritories);
+
         Console.WriteLine(
             $"Voronoi lab: {cities.Count} country-constrained cells, " +
             $"{edgePayload.Count} terrestrial adjacencies, {foreignEdges} cross-border adjacencies");
+    }
+
+    static async Task WriteTerritoryAuditAsync(
+        string outDir,
+        IReadOnlyList<City> cities,
+        IReadOnlyList<Geometry> cells,
+        IReadOnlySet<(int A, int B)> adjacency,
+        IReadOnlyList<int> degree,
+        IReadOnlyDictionary<string, Geometry> countryTerritories)
+    {
+        var empty = new List<object>();
+        var invalid = new List<object>();
+        var seedOutside = new List<object>();
+        var lowDegree = new List<object>();
+
+        for (var i = 0; i < cities.Count; i++)
+        {
+            var city = cities[i];
+            var geometry = cells[i];
+
+            if (geometry.IsEmpty || geometry.Dimension < Dimension.Surface || geometry.Area <= 0)
+                empty.Add(new { city.Id, city.Name, city.Country });
+
+            if (!geometry.IsEmpty && !geometry.IsValid)
+                invalid.Add(new { city.Id, city.Name, city.Country });
+
+            if (!geometry.IsEmpty)
+            {
+                var seed = GeometryFactory.CreatePoint(new Coordinate(city.Lon, city.Lat));
+                if (!geometry.Covers(seed))
+                    seedOutside.Add(new
+                    {
+                        city.Id,
+                        city.Name,
+                        city.Country,
+                        city.Lat,
+                        city.Lon,
+                        distanceToCellDegrees = Math.Round(geometry.Distance(seed), 6)
+                    });
+            }
+
+            if (degree[i] <= 1)
+                lowDegree.Add(new
+                {
+                    city.Id,
+                    city.Name,
+                    city.Country,
+                    degree = degree[i],
+                    city.Lat,
+                    city.Lon
+                });
+        }
+
+        var idDuplicates = cities
+            .GroupBy(x => x.Id)
+            .Where(g => g.Count() > 1)
+            .Select(g => new
+            {
+                id = g.Key,
+                occurrences = g.Count(),
+                cities = g.Select(x => new { x.Name, x.Country }).ToArray()
+            })
+            .ToArray();
+
+        var selfEdges = adjacency.Count(x => x.A == x.B);
+        var invalidEdgeIndices = adjacency.Count(x =>
+            x.A < 0 || x.B < 0 || x.A >= cities.Count || x.B >= cities.Count);
+
+        var degreeHistogram = degree
+            .GroupBy(x => x)
+            .OrderBy(g => g.Key)
+            .ToDictionary(g => g.Key.ToString(CultureInfo.InvariantCulture), g => g.Count());
+
+        var components = new List<List<int>>();
+        var neighbours = Enumerable.Range(0, cities.Count)
+            .Select(_ => new List<int>())
+            .ToArray();
+
+        foreach (var (a, b) in adjacency)
+        {
+            if (a < 0 || b < 0 || a >= cities.Count || b >= cities.Count || a == b) continue;
+            neighbours[a].Add(b);
+            neighbours[b].Add(a);
+        }
+
+        var visited = new bool[cities.Count];
+        for (var start = 0; start < cities.Count; start++)
+        {
+            if (visited[start]) continue;
+            var component = new List<int>();
+            var stack = new Stack<int>();
+            stack.Push(start);
+            visited[start] = true;
+
+            while (stack.Count > 0)
+            {
+                var current = stack.Pop();
+                component.Add(current);
+                foreach (var next in neighbours[current])
+                {
+                    if (visited[next]) continue;
+                    visited[next] = true;
+                    stack.Push(next);
+                }
+            }
+
+            components.Add(component);
+        }
+
+        var componentSummary = components
+            .OrderByDescending(x => x.Count)
+            .Select((component, index) => new
+            {
+                component = index + 1,
+                cellCount = component.Count,
+                countries = component
+                    .Select(i => cities[i].Country)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(x => x)
+                    .ToArray(),
+                sampleCities = component
+                    .Take(8)
+                    .Select(i => new { cities[i].Id, cities[i].Name, cities[i].Country })
+                    .ToArray()
+            })
+            .ToArray();
+
+        var territoryCoverage = cities
+            .Select((city, index) => (city, index))
+            .GroupBy(x => x.city.Country, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(g => g.Key)
+            .Select(g =>
+            {
+                var union = UnaryUnionOp.Union(g.Select(x => cells[x.index]).Where(x => !x.IsEmpty).ToArray());
+                var target = countryTerritories[g.Key];
+
+                Geometry missing;
+                Geometry excess;
+                try
+                {
+                    missing = target.Difference(union);
+                    excess = union.Difference(target);
+                }
+                catch
+                {
+                    missing = target.Buffer(0).Difference(union.Buffer(0));
+                    excess = union.Buffer(0).Difference(target.Buffer(0));
+                }
+
+                var targetArea = Math.Max(1e-12, target.Area);
+                return new
+                {
+                    territoryCode = g.Key,
+                    cityCount = g.Count(),
+                    targetAreaDegrees2 = Math.Round(target.Area, 8),
+                    unionAreaDegrees2 = Math.Round(union.Area, 8),
+                    missingRatio = Math.Round(missing.Area / targetArea, 8),
+                    excessRatio = Math.Round(excess.Area / targetArea, 8)
+                };
+            })
+            .ToArray();
+
+        var coverageWarnings = territoryCoverage
+            .Where(x => x.missingRatio > 1e-6 || x.excessRatio > 1e-6)
+            .OrderByDescending(x => Math.Max(x.missingRatio, x.excessRatio))
+            .ToArray();
+
+        var maxDegree = degree.Count == 0 ? 0 : degree.Max();
+        var meanDegree = degree.Count == 0 ? 0 : degree.Average();
+
+        var audit = new
+        {
+            generatedAtUtc = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+            status = "diagnostic",
+            summary = new
+            {
+                cellCount = cities.Count,
+                territoryCount = cities.Select(x => x.Country).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                edgeCount = adjacency.Count,
+                meanDegree = Math.Round(meanDegree, 3),
+                maxDegree,
+                zeroNeighbourCount = degree.Count(x => x == 0),
+                oneNeighbourCount = degree.Count(x => x == 1),
+                emptyGeometryCount = empty.Count,
+                invalidGeometryCount = invalid.Count,
+                seedOutsideCellCount = seedOutside.Count,
+                duplicateCityIdCount = idDuplicates.Length,
+                selfEdgeCount = selfEdges,
+                invalidEdgeIndexCount = invalidEdgeIndices,
+                connectedComponentCount = components.Count,
+                coverageWarningCount = coverageWarnings.Length
+            },
+            degreeHistogram,
+            zeroOrOneNeighbourCities = lowDegree,
+            emptyGeometries = empty,
+            invalidGeometries = invalid,
+            seedsOutsideCells = seedOutside,
+            duplicateCityIds = idDuplicates,
+            connectedComponents = componentSummary,
+            territoryCoverageWarnings = coverageWarnings
+        };
+
+        await File.WriteAllTextAsync(
+            Path.Combine(outDir, "territory-audit.json"),
+            JsonSerializer.Serialize(audit, new JsonSerializerOptions { WriteIndented = true }));
+
+        var md = new StringBuilder();
+        md.AppendLine("# World Conquest — territorial graph audit");
+        md.AppendLine();
+        md.AppendLine("**Status: DIAGNOSTIC.** This report measures the generated worldwide Voronoi/adjacency graph; it does not automatically classify every low-degree island as an error.");
+        md.AppendLine();
+        md.AppendLine($"- Cells: **{cities.Count:N0}**");
+        md.AppendLine($"- Territories: **{audit.summary.territoryCount:N0}**");
+        md.AppendLine($"- Terrestrial edges: **{adjacency.Count:N0}**");
+        md.AppendLine($"- Mean degree: **{meanDegree:F2}**");
+        md.AppendLine($"- Max degree: **{maxDegree}**");
+        md.AppendLine($"- 0-neighbour cells: **{audit.summary.zeroNeighbourCount:N0}**");
+        md.AppendLine($"- 1-neighbour cells: **{audit.summary.oneNeighbourCount:N0}**");
+        md.AppendLine($"- Empty geometries: **{empty.Count:N0}**");
+        md.AppendLine($"- Invalid geometries: **{invalid.Count:N0}**");
+        md.AppendLine($"- Seeds outside their cell: **{seedOutside.Count:N0}**");
+        md.AppendLine($"- Duplicate city ids: **{idDuplicates.Length:N0}**");
+        md.AppendLine($"- Connected terrestrial components: **{components.Count:N0}**");
+        md.AppendLine($"- Territory coverage warnings: **{coverageWarnings.Length:N0}**");
+        md.AppendLine();
+        md.AppendLine("## Cells with 0 or 1 terrestrial neighbour");
+        md.AppendLine();
+        foreach (var x in lowDegree)
+            md.AppendLine($"- {x.Name} ({x.Country}) — degree {x.degree} — id {x.Id}");
+        md.AppendLine();
+        md.AppendLine("## Seeds outside their generated cell");
+        md.AppendLine();
+        if (seedOutside.Count == 0) md.AppendLine("- None.");
+        else foreach (dynamic x in seedOutside) md.AppendLine($"- {x.Name} ({x.Country}) — id {x.Id}");
+        md.AppendLine();
+        md.AppendLine("## Territory coverage warnings");
+        md.AppendLine();
+        if (coverageWarnings.Length == 0) md.AppendLine("- None.");
+        else
+        {
+            foreach (var x in coverageWarnings.Take(100))
+                md.AppendLine($"- {x.territoryCode}: missing {x.missingRatio:P6}, excess {x.excessRatio:P6}");
+        }
+
+        await File.WriteAllTextAsync(Path.Combine(outDir, "territory-audit.md"), md.ToString());
+
+        Console.WriteLine(
+            $"Territory audit: degree<=1={lowDegree.Count}, empty={empty.Count}, invalid={invalid.Count}, " +
+            $"seedOutside={seedOutside.Count}, components={components.Count}, coverageWarnings={coverageWarnings.Length}.");
     }
 
     static Polygon ToPolygon(List<Pt> poly, double cosLat)
