@@ -100,6 +100,51 @@ static class WorldSelectionLab
                 .Select(code => BuildInternalSpacingShrinkTest(code, selected[code], candidates[code], 25.0))
                 .ToArray();
 
+            var spacingByCode25 = internalSpacing25KmVariableQuota.ToDictionary(x => x.Code, StringComparer.OrdinalIgnoreCase);
+            var scaled25KmExperiments = new[] { 0.15, 0.20, 0.25 }
+                .Select(coefficient =>
+                {
+                    var rows = selected.Keys
+                        .OrderBy(code => code)
+                        .Select(code =>
+                        {
+                            var area = countries[code].AreaKm2;
+                            var threshold = Math.Min(25.0, coefficient * Math.Sqrt(area));
+                            if (Math.Abs(threshold - 25.0) < 1e-9)
+                                return spacingByCode25[code];
+                            return BuildInternalSpacingShrinkTest(code, selected[code], candidates[code], threshold);
+                        })
+                        .ToArray();
+
+                    var finalCount = rows.Sum(x => x.FinalCount);
+                    var reduced = rows
+                        .Where(x => x.QuotaReduction > 0)
+                        .OrderByDescending(x => x.QuotaReduction)
+                        .ThenBy(x => x.Code)
+                        .Select(x => new
+                        {
+                            code = x.Code,
+                            areaKm2 = countries[x.Code].AreaKm2,
+                            thresholdKm = Math.Round(x.ThresholdKm, 1),
+                            initial = x.FinalCount + x.QuotaReduction,
+                            final = x.FinalCount,
+                            reduction = x.QuotaReduction
+                        })
+                        .ToArray();
+
+                    return new
+                    {
+                        coefficient,
+                        rule = "min(25 km, coefficient * sqrt(areaKm2))",
+                        initialCityCount = all.Count,
+                        finalCityCount = finalCount,
+                        quotaReduction = all.Count - finalCount,
+                        reducedCountryCount = reduced.Length,
+                        reducedCountries = reduced
+                    };
+                })
+                .ToArray();
+
             var adaptiveTotalCities = internalSpacing25KmVariableQuota.Sum(x => x.FinalCount);
             var adaptiveQuotaReduction = all.Count - adaptiveTotalCities;
             var adaptiveReducedCountries = internalSpacing25KmVariableQuota
@@ -138,6 +183,7 @@ static class WorldSelectionLab
                 spacingReplacements = spacingChanges,
                 internalSpacing25Km,
                 internalSpacing25KmVariableQuota,
+                scaled25KmExperiments,
                 adaptive25KmSummary = new
                 {
                     initialCityCount = all.Count,
