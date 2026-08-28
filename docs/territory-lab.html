@@ -18,7 +18,7 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1520;fon
 .border-layer path{fill:none;stroke:var(--border);stroke-width:.75;vector-effect:non-scaling-stroke}
 .border-layer.border-active{opacity:1}
 .territory-fill-layer,.territory-internal-layer{pointer-events:none}
-.territory-cell{stroke:none}
+.territory-cell{stroke-width:.8;stroke-linejoin:round;vector-effect:non-scaling-stroke}
 .territory-internal-layer path{fill:none;stroke:#fff;stroke-width:.55;vector-effect:non-scaling-stroke}
 .city-layer{pointer-events:none}
 .city-seed{fill:#17222c;stroke:none;stroke-width:0;vector-effect:non-scaling-stroke;pointer-events:none}
@@ -302,7 +302,7 @@ function drawTerritories(){if(!territoryData||!path)return;
  cityById=new Map(territoryData.cells.map(d=>[d.id,d]));
  neighborMap=new Map(territoryData.cells.map(d=>[d.id,[]]));
  buildOwnerColors();
- territoryFillRoot.selectAll("path.territory-cell").data(territoryData.cells,d=>d.id).join("path").attr("class","territory-cell").attr("fill",d=>territoryColors[d.ownerCode||d.country]||"#9aa0a6").attr("d",d=>d.geometry?path(d.geometry):null);territoryInternalRoot.selectAll("path").data(territoryData.cells,d=>d.id).join("path").attr("d",d=>d.geometry?path(d.geometry):null);
+ territoryFillRoot.selectAll("path.territory-cell").data(territoryData.cells,d=>d.id).join("path").attr("class","territory-cell").attr("fill",d=>territoryColors[d.ownerCode||d.country]||"#9aa0a6").attr("stroke",d=>territoryColors[d.ownerCode||d.country]||"#9aa0a6").attr("d",d=>d.geometry?path(d.geometry):null);territoryInternalRoot.selectAll("path").data(territoryData.cells,d=>d.id).join("path").attr("d",d=>d.geometry?path(d.geometry):null);
  for(const e of (territoryData.edges||[])){
   if(neighborMap.has(e.a))neighborMap.get(e.a).push({...e,other:e.b});
   if(neighborMap.has(e.b))neighborMap.get(e.b).push({...e,other:e.a});
