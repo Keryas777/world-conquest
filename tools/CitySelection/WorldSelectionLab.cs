@@ -7,6 +7,18 @@ static class WorldSelectionLab
 {
     sealed record CountryInfo(string Code, string Name, double AreaKm2, long Population);
     sealed record Formula(string Id, double AreaExponent, double PopulationExponent);
+    sealed record InternalSpacingShrinkResult(
+        string Code,
+        double ThresholdKm,
+        object Before,
+        object After,
+        int FinalCount,
+        int QuotaReduction,
+        int ReplacementCount,
+        int RemovalWithoutReplacementCount,
+        int RemainingPairCountBelowThreshold,
+        List<object> Replacements,
+        List<object> RemovalsWithoutReplacement);
 
     static readonly Formula[] Formulas =
     {
@@ -82,10 +94,32 @@ static class WorldSelectionLab
                 .Select(code => BuildInternalSpacingTest(code, selected[code], candidates[code], 25.0))
                 .ToArray();
 
-            var internalSpacing25KmVariableQuota = new[] { "FR", "EG", "DZ" }
-                .Where(code => selected.ContainsKey(code) && candidates.ContainsKey(code))
+            var internalSpacing25KmVariableQuota = selected.Keys
+                .Where(code => candidates.ContainsKey(code))
+                .OrderBy(code => code)
                 .Select(code => BuildInternalSpacingShrinkTest(code, selected[code], candidates[code], 25.0))
                 .ToArray();
+
+            var adaptiveTotalCities = internalSpacing25KmVariableQuota.Sum(x => x.FinalCount);
+            var adaptiveQuotaReduction = all.Count - adaptiveTotalCities;
+            var adaptiveReducedCountries = internalSpacing25KmVariableQuota
+                .Where(x => x.QuotaReduction > 0)
+                .OrderByDescending(x => x.QuotaReduction)
+                .ThenBy(x => x.Code)
+                .Select(x => new
+                {
+                    code = x.Code,
+                    initial = x.FinalCount + x.QuotaReduction,
+                    final = x.FinalCount,
+                    reduction = x.QuotaReduction
+                })
+                .ToArray();
+
+            Console.WriteLine(
+                $"Worldwide 25 km adaptive spacing: {all.Count:N0} -> {adaptiveTotalCities:N0} cities " +
+                $"(-{adaptiveQuotaReduction:N0}), {adaptiveReducedCountries.Length} country/countries reduced.");
+            foreach (var row in adaptiveReducedCountries.Take(40))
+                Console.WriteLine($"  {row.code}: {row.initial} -> {row.final} (-{row.reduction})");
 
             var payload = new
             {
@@ -104,6 +138,14 @@ static class WorldSelectionLab
                 spacingReplacements = spacingChanges,
                 internalSpacing25Km,
                 internalSpacing25KmVariableQuota,
+                adaptive25KmSummary = new
+                {
+                    initialCityCount = all.Count,
+                    finalCityCount = adaptiveTotalCities,
+                    quotaReduction = adaptiveQuotaReduction,
+                    reducedCountryCount = adaptiveReducedCountries.Length,
+                    reducedCountries = adaptiveReducedCountries
+                },
                 countries = countryRows,
                 closeCrossBorderPairs = closePairs.Select(x => new
                 {
@@ -221,7 +263,7 @@ static class WorldSelectionLab
         return result;
     }
 
-    static object BuildInternalSpacingShrinkTest(
+    static InternalSpacingShrinkResult BuildInternalSpacingShrinkTest(
         string code,
         IReadOnlyList<City> currentSelection,
         IReadOnlyList<City> candidates,
@@ -342,19 +384,18 @@ static class WorldSelectionLab
         for (var j = i + 1; j < after.Count; j++)
             if (Geo.Km(after[i], after[j]) < thresholdKm) remainingConflicts++;
 
-        return new
-        {
-            code,
-            thresholdKm,
-            before = Stats(before),
-            after = Stats(after),
-            quotaReduction = before.Count - after.Count,
-            replacementCount = replacements.Count,
-            removalWithoutReplacementCount = removalsWithoutReplacement.Count,
-            remainingPairCountBelowThreshold = remainingConflicts,
-            replacements,
-            removalsWithoutReplacement
-        };
+        return new InternalSpacingShrinkResult(
+            Code: code,
+            ThresholdKm: thresholdKm,
+            Before: Stats(before),
+            After: Stats(after),
+            FinalCount: after.Count,
+            QuotaReduction: before.Count - after.Count,
+            ReplacementCount: replacements.Count,
+            RemovalWithoutReplacementCount: removalsWithoutReplacement.Count,
+            RemainingPairCountBelowThreshold: remainingConflicts,
+            Replacements: replacements,
+            RemovalsWithoutReplacement: removalsWithoutReplacement);
     }
 
     static object BuildInternalSpacingTest(
