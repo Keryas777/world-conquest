@@ -777,10 +777,43 @@ static class WorldSelectionLab
 
             if (!resolved)
             {
+                // No valid replacement exists on either side. Apply the same
+                // adaptive-quota principle used for internal spacing: remove
+                // the less important endpoint, but never delete the last city
+                // of a territory.
+                var removable = attempts
+                    .Select(x => x.Remove)
+                    .Where(city => selected[city.Country].Count > 1)
+                    .OrderBy(city => city.Population)
+                    .ThenBy(city => city.Id)
+                    .FirstOrDefault();
+
+                if (removable is not null)
+                {
+                    selected[removable.Country].RemoveAll(x => x.Id == removable.Id);
+                    changes.Add(new
+                    {
+                        removedId = removable.Id,
+                        removedName = removable.Name,
+                        country = removable.Country,
+                        keptId = removable.Id == conflict.A.Id ? conflict.B.Id : conflict.A.Id,
+                        keptName = removable.Id == conflict.A.Id ? conflict.B.Name : conflict.A.Name,
+                        replacementId = (long?)null,
+                        replacementName = (string?)null,
+                        originalConflictKm = Math.Round(conflict.Km, 2),
+                        action = "remove_without_replacement"
+                    });
+                    Console.WriteLine(
+                        $"25 km spacing quota reduction: removed {removable.Name} ({removable.Country}) " +
+                        $"to resolve {conflict.Km:F1} km cross-border conflict.");
+                    continue;
+                }
+
                 var key = (Math.Min(conflict.A.Id, conflict.B.Id), Math.Max(conflict.A.Id, conflict.B.Id));
                 unresolved.Add(key);
                 Console.WriteLine(
-                    $"25 km spacing irreducible: {conflict.A.Name} ({conflict.A.Country}) / " +
+                    $"25 km spacing irreducible because both territories are at one city: " +
+                    $"{conflict.A.Name} ({conflict.A.Country}) / " +
                     $"{conflict.B.Name} ({conflict.B.Country}) : {conflict.Km:F1} km");
             }
         }
