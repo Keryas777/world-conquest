@@ -621,13 +621,17 @@ static class VoronoiLab
         IEnumerable<string> countryCodes)
     {
         var wanted = countryCodes.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var result = new Dictionary<string, Geometry>(StringComparer.OrdinalIgnoreCase);
+        var partsByCode = wanted.ToDictionary(
+            code => code,
+            _ => new List<Geometry>(),
+            StringComparer.OrdinalIgnoreCase);
         var cacheDir = Path.Combine("data", "raw", "natural-earth");
         Directory.CreateDirectory(cacheDir);
 
-        // Countries ISO handles almost everything. Map units/subunits provide
-        // overseas and disputed geographic units that are intentionally absent
-        // from the countries layer.
+        // Do not stop at the first layer that resolves a territory. Natural Earth
+        // splits some islands, overseas units and disputed areas across countries,
+        // map-units and subunits. Accumulate every matching polygon from all three
+        // layers, then union them per territory.
         var sources = new[]
         {
             "ne_10m_admin_0_countries_iso.geojson",
@@ -637,9 +641,6 @@ static class VoronoiLab
 
         foreach (var fileName in sources)
         {
-            var remaining = wanted.Where(code => !result.ContainsKey(code)).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (remaining.Count == 0) break;
-
             var path = Path.Combine(cacheDir, fileName);
             if (!File.Exists(path))
             {
@@ -650,15 +651,12 @@ static class VoronoiLab
             }
 
             using var document = JsonDocument.Parse(await File.ReadAllTextAsync(path));
-            var partsByCode = remaining.ToDictionary(
-                code => code,
-                _ => new List<Geometry>(),
-                StringComparer.OrdinalIgnoreCase);
+            var matchedFeatures = 0;
 
             foreach (var feature in document.RootElement.GetProperty("features").EnumerateArray())
             {
                 var properties = feature.GetProperty("properties");
-                var codes = ReadTerritoryCodes(properties, remaining).ToArray();
+                var codes = ReadTerritoryCodes(properties, wanted).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
                 if (codes.Length == 0) continue;
 
                 var geometry = ParseGeoJsonGeometry(feature.GetProperty("geometry"));
@@ -666,19 +664,32 @@ static class VoronoiLab
 
                 foreach (var code in codes)
                     partsByCode[code].Add(geometry);
-            }
 
-            foreach (var code in remaining)
-            {
-                var parts = partsByCode[code];
-                if (parts.Count == 0) continue;
-                var geometry = UnaryUnionOp.Union(parts);
-                if (!geometry.IsValid) geometry = geometry.Buffer(0);
-                result[code] = geometry;
+                matchedFeatures++;
             }
 
             Console.WriteLine(
-                $"Natural Earth territory source {fileName}: {result.Count}/{wanted.Count} resolved.");
+                $"Natural Earth territory source {fileName}: {matchedFeatures:N0} matching feature(s).");
+        }
+
+        var result = new Dictionary<string, Geometry>(StringComparer.OrdinalIgnoreCase);
+        foreach (var code in wanted.OrderBy(x => x))
+        {
+            var parts = partsByCode[code];
+            if (parts.Count == 0) continue;
+
+            Geometry geometry;
+            try
+            {
+                geometry = UnaryUnionOp.Union(parts);
+            }
+            catch
+            {
+                geometry = UnaryUnionOp.Union(parts.Select(x => x.Buffer(0)).ToArray());
+            }
+
+            if (!geometry.IsValid) geometry = geometry.Buffer(0);
+            result[code] = geometry;
         }
 
         var missing = wanted.Where(code => !result.ContainsKey(code)).OrderBy(x => x).ToArray();
@@ -686,7 +697,7 @@ static class VoronoiLab
             throw new InvalidOperationException(
                 "Natural Earth territory mapping missing for: " + string.Join(", ", missing));
 
-        Console.WriteLine($"Natural Earth territories loaded: {result.Count}/{wanted.Count}.");
+        Console.WriteLine($"Natural Earth territories loaded from merged sources: {result.Count}/{wanted.Count}.");
         return result;
     }
 
