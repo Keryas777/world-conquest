@@ -19,6 +19,39 @@
   "cityCount": 9894,
   "initialCloseCrossBorderPairCount": 269,
   "closeCrossBorderPairCount": 3,
+  "crossBorderSpacingStatus": "validated_with_microterritory_exceptions",
+  "acceptedCrossBorderExceptions": [
+    {
+      "aId": 3579247,
+      "aName": "Grand-Case",
+      "aCountry": "MF",
+      "bId": 3513794,
+      "bName": "Cul de Sac",
+      "bCountry": "SX",
+      "km": 6.37,
+      "reason": "Accepted micro-territory exception: preserving the last city of each territory takes priority over the 25 km cross-border spacing rule."
+    },
+    {
+      "aId": 3573374,
+      "aName": "The Valley",
+      "aCountry": "AI",
+      "bId": 3579247,
+      "bName": "Grand-Case",
+      "bCountry": "MF",
+      "km": 12.49,
+      "reason": "Accepted micro-territory exception: preserving the last city of each territory takes priority over the 25 km cross-border spacing rule."
+    },
+    {
+      "aId": 3573374,
+      "aName": "The Valley",
+      "aCountry": "AI",
+      "bId": 3513794,
+      "bName": "Cul de Sac",
+      "bCountry": "SX",
+      "km": 18.75,
+      "reason": "Accepted micro-territory exception: preserving the last city of each territory takes priority over the 25 km cross-border spacing rule."
+    }
+  ],
   "spacingReplacementCount": 242,
   "spacingReplacements": [
     {
