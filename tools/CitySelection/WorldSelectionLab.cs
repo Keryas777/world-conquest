@@ -30,6 +30,8 @@ static class WorldSelectionLab
     const long MinPopulation = 500;
     const double PopulationWeight = .60;
     const double CrossBorderDiagnosticKm = 25.0;
+    const double InternalSpacingCoefficient = 0.15;
+    const double InternalSpacingMaxKm = 25.0;
 
     public static async Task<Dictionary<string, List<City>>> GenerateAsync(HttpClient http, string outDir)
     {
@@ -65,7 +67,26 @@ static class WorldSelectionLab
 
             var beforeSpacing = selected.Values.SelectMany(x => x).ToList();
             var initialClosePairs = FindCrossBorderPairs(beforeSpacing, CrossBorderDiagnosticKm);
-            var spacingChanges = ApplyCrossBorderSpacing(selected, candidates, CrossBorderDiagnosticKm);
+
+            var internalThresholds = selected.Keys.ToDictionary(
+                code => code,
+                code => Math.Min(
+                    InternalSpacingMaxKm,
+                    InternalSpacingCoefficient * Math.Sqrt(countries[code].AreaKm2)),
+                StringComparer.OrdinalIgnoreCase);
+
+            var internalSpacingChanges = ApplyInternalSpacingAdaptive(
+                selected,
+                candidates,
+                internalThresholds,
+                CrossBorderDiagnosticKm);
+
+            var spacingChanges = ApplyCrossBorderSpacing(
+                selected,
+                candidates,
+                CrossBorderDiagnosticKm,
+                internalThresholds);
+
             var all = selected.Values.SelectMany(x => x).ToList();
             var closePairs = FindCrossBorderPairs(all, CrossBorderDiagnosticKm);
 
@@ -175,6 +196,16 @@ static class WorldSelectionLab
                 coverageWeight = 1 - PopulationWeight,
                 minimumPopulation = MinPopulation,
                 crossBorderDiagnosticKm = CrossBorderDiagnosticKm,
+                internalSpacingRule = new
+                {
+                    status = "validated",
+                    coefficient = InternalSpacingCoefficient,
+                    maxKm = InternalSpacingMaxKm,
+                    formula = "min(25 km, 0.15 * sqrt(areaKm2))",
+                    changedCountryCount = internalSpacingChanges.Select(x => x.Country).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                    removalCount = internalSpacingChanges.Count(x => x.Kind == "remove"),
+                    replacementCount = internalSpacingChanges.Count(x => x.Kind == "replace")
+                },
                 countryCount = selected.Count,
                 cityCount = all.Count,
                 initialCloseCrossBorderPairCount = initialClosePairs.Count,
@@ -568,10 +599,105 @@ static class WorldSelectionLab
         };
     }
 
+    sealed record InternalSpacingChange(
+        string Country,
+        string Kind,
+        long RemovedId,
+        string RemovedName,
+        long? ReplacementId,
+        string? ReplacementName,
+        double ConflictKm,
+        double ThresholdKm);
+
+    static List<InternalSpacingChange> ApplyInternalSpacingAdaptive(
+        Dictionary<string, List<City>> selected,
+        IReadOnlyDictionary<string, List<City>> candidates,
+        IReadOnlyDictionary<string, double> thresholds,
+        double crossBorderKm)
+    {
+        var changes = new List<InternalSpacingChange>();
+
+        foreach (var code in selected.Keys.OrderBy(x => x).ToArray())
+        {
+            var after = selected[code];
+            if (after.Count < 2) continue;
+
+            var thresholdKm = thresholds[code];
+            var candidatePool = candidates[code]
+                .Where(c => after.All(s => s.Id != c.Id))
+                .OrderByDescending(c => c.Population)
+                .ToList();
+
+            for (var pass = 0; pass < 5000; pass++)
+            {
+                (City A, City B, double Km)? conflict = null;
+                for (var i = 0; i < after.Count && conflict is null; i++)
+                for (var j = i + 1; j < after.Count; j++)
+                {
+                    var km = Geo.Km(after[i], after[j]);
+                    if (km < thresholdKm)
+                    {
+                        conflict = (after[i], after[j], km);
+                        break;
+                    }
+                }
+
+                if (conflict is null) break;
+
+                var pair = conflict.Value;
+                var remove = pair.A.Population <= pair.B.Population ? pair.A : pair.B;
+
+                City? replacement = null;
+                foreach (var candidate in candidatePool)
+                {
+                    if (after.Any(s => s.Id != remove.Id && Geo.Km(candidate, s) < thresholdKm))
+                        continue;
+
+                    var conflictsForeign = selected
+                        .Where(kv => !kv.Key.Equals(code, StringComparison.OrdinalIgnoreCase))
+                        .SelectMany(kv => kv.Value)
+                        .Any(city => Geo.Km(candidate, city) < crossBorderKm);
+                    if (conflictsForeign) continue;
+
+                    replacement = candidate;
+                    break;
+                }
+
+                after.RemoveAll(x => x.Id == remove.Id);
+
+                if (replacement is null)
+                {
+                    changes.Add(new InternalSpacingChange(
+                        code, "remove", remove.Id, remove.Name,
+                        null, null, Math.Round(pair.Km, 2), Math.Round(thresholdKm, 2)));
+                    continue;
+                }
+
+                after.Add(replacement);
+                candidatePool.RemoveAll(x => x.Id == replacement.Id);
+                candidatePool.Add(remove);
+                candidatePool = candidatePool.OrderByDescending(x => x.Population).ToList();
+
+                changes.Add(new InternalSpacingChange(
+                    code, "replace", remove.Id, remove.Name,
+                    replacement.Id, replacement.Name,
+                    Math.Round(pair.Km, 2), Math.Round(thresholdKm, 2)));
+            }
+        }
+
+        Console.WriteLine(
+            $"Validated internal spacing 0.15: {changes.Count} change(s), " +
+            $"{changes.Count(x => x.Kind == "remove")} removal(s), " +
+            $"{changes.Count(x => x.Kind == "replace")} replacement(s).");
+
+        return changes;
+    }
+
     static List<object> ApplyCrossBorderSpacing(
         Dictionary<string, List<City>> selected,
         IReadOnlyDictionary<string, List<City>> candidates,
-        double thresholdKm)
+        double thresholdKm,
+        IReadOnlyDictionary<string, double>? internalThresholds = null)
     {
         var changes = new List<object>();
         var unresolved = new HashSet<(long A, long B)>();
@@ -613,6 +739,9 @@ static class WorldSelectionLab
                     if (selectedIds.Contains(candidate.Id)) continue;
                     if (all.Any(x => x.Id != remove.Id && x.Country != candidate.Country &&
                                      Geo.Km(candidate, x) < thresholdKm)) continue;
+                    if (internalThresholds is not null &&
+                        internalThresholds.TryGetValue(candidate.Country, out var internalKm) &&
+                        countryList.Any(x => x.Id != remove.Id && Geo.Km(candidate, x) < internalKm)) continue;
 
                     var sameCountry = countryList.Where(x => x.Id != remove.Id).ToList();
                     var nearest = sameCountry.Count == 0 ? 1000.0 : sameCountry.Min(x => Geo.Km(candidate, x));
