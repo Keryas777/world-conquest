@@ -16,10 +16,10 @@
     "replacementCount": 25
   },
   "countryCount": 242,
-  "cityCount": 9907,
+  "cityCount": 9894,
   "initialCloseCrossBorderPairCount": 269,
-  "closeCrossBorderPairCount": 17,
-  "spacingReplacementCount": 229,
+  "closeCrossBorderPairCount": 3,
+  "spacingReplacementCount": 242,
   "spacingReplacements": [
     {
       "removedId": 918488,
@@ -282,6 +282,17 @@
       "originalConflictKm": 2.81
     },
     {
+      "removedId": 3384792,
+      "removedName": "Albina",
+      "country": "SR",
+      "keptId": 3380387,
+      "keptName": "Saint-Laurent-du-Maroni",
+      "replacementId": null,
+      "replacementName": null,
+      "originalConflictKm": 2.91,
+      "action": "remove_without_replacement"
+    },
+    {
       "removedId": 2040893,
       "removedName": "Sin\u016Diju",
       "country": "KP",
@@ -472,6 +483,28 @@
       "originalConflictKm": 4.75
     },
     {
+      "removedId": 2310763,
+      "removedName": "Zongo",
+      "country": "CD",
+      "keptId": 2389853,
+      "keptName": "Bangui",
+      "replacementId": null,
+      "replacementName": null,
+      "originalConflictKm": 4.83,
+      "action": "remove_without_replacement"
+    },
+    {
+      "removedId": 2384377,
+      "removedName": "Mongoumba",
+      "country": "CF",
+      "keptId": 2313762,
+      "keptName": "Libenge",
+      "replacementId": null,
+      "replacementName": null,
+      "originalConflictKm": 4.84,
+      "action": "remove_without_replacement"
+    },
+    {
       "removedId": 3169070,
       "removedName": "Rome",
       "country": "IT",
@@ -582,6 +615,17 @@
       "originalConflictKm": 6.43
     },
     {
+      "removedId": 11764763,
+      "removedName": "M\u012Bn\u0101\u2019 Dab\u0101",
+      "country": "OM",
+      "keptId": 292231,
+      "keptName": "Dibba Al-Fujairah",
+      "replacementId": null,
+      "replacementName": null,
+      "originalConflictKm": 6.47,
+      "action": "remove_without_replacement"
+    },
+    {
       "removedId": 295277,
       "removedName": "Eilat",
       "country": "IL",
@@ -630,6 +674,28 @@
       "replacementId": 1793036,
       "replacementName": "Chengtangcun",
       "originalConflictKm": 7.21
+    },
+    {
+      "removedId": 202326,
+      "removedName": "Cyangugu",
+      "country": "RW",
+      "keptId": 217831,
+      "keptName": "Bukavu",
+      "replacementId": null,
+      "replacementName": null,
+      "originalConflictKm": 7.22,
+      "action": "remove_without_replacement"
+    },
+    {
+      "removedId": 289317,
+      "removedName": "Al Buraym\u012B",
+      "country": "OM",
+      "keptId": 292913,
+      "keptName": "Al Ain City",
+      "replacementId": null,
+      "replacementName": null,
+      "originalConflictKm": 7.37,
+      "action": "remove_without_replacement"
     },
     {
       "removedId": 2392837,
@@ -732,6 +798,17 @@
       "originalConflictKm": 8.49
     },
     {
+      "removedId": 6692148,
+      "removedName": "Benzdorp (Monte Hermon)",
+      "country": "SR",
+      "keptId": 3380994,
+      "keptName": "Maripasoula",
+      "replacementId": null,
+      "replacementName": null,
+      "originalConflictKm": 8.67,
+      "action": "remove_without_replacement"
+    },
+    {
       "removedId": 3680539,
       "removedName": "Ipiales",
       "country": "CO",
@@ -812,6 +889,17 @@
       "originalConflictKm": 9.72
     },
     {
+      "removedId": 898188,
+      "removedName": "Siavonga",
+      "country": "ZM",
+      "keptId": 889215,
+      "keptName": "Kariba",
+      "replacementId": null,
+      "replacementName": null,
+      "originalConflictKm": 10.02,
+      "action": "remove_without_replacement"
+    },
+    {
       "removedId": 690040,
       "removedName": "Velykyy Bychkiv",
       "country": "UA",
@@ -820,6 +908,17 @@
       "replacementId": 707753,
       "replacementName": "Horlivka",
       "originalConflictKm": 10.12
+    },
+    {
+      "removedId": 879431,
+      "removedName": "Victoria Falls",
+      "country": "ZW",
+      "keptId": 910111,
+      "keptName": "Livingstone",
+      "replacementId": null,
+      "replacementName": null,
+      "originalConflictKm": 10.41,
+      "action": "remove_without_replacement"
     },
     {
       "removedId": 2781703,
@@ -862,6 +961,17 @@
       "originalConflictKm": 11.23
     },
     {
+      "removedId": 347702,
+      "removedName": "Taba",
+      "country": "EG",
+      "keptId": 250774,
+      "keptName": "Aqaba",
+      "replacementId": null,
+      "replacementName": null,
+      "originalConflictKm": 11.51,
+      "action": "remove_without_replacement"
+    },
+    {
       "removedId": 3197753,
       "removedName": "Koper",
       "country": "SI",
@@ -880,6 +990,17 @@
       "replacementId": 2644668,
       "replacementName": "Leicester",
       "originalConflictKm": 11.87
+    },
+    {
+      "removedId": 12687307,
+      "removedName": "Umm S\u0101\u0027ad",
+      "country": "LY",
+      "keptId": 359867,
+      "keptName": "As Sall\u016Bm",
+      "replacementId": null,
+      "replacementName": null,
+      "originalConflictKm": 11.97,
+      "action": "remove_without_replacement"
     },
     {
       "removedId": 1818558,
@@ -1000,6 +1121,17 @@
       "replacementId": 335035,
       "replacementName": "Harar",
       "originalConflictKm": 13.06
+    },
+    {
+      "removedId": 2462651,
+      "removedName": "La G\u00FCera",
+      "country": "EH",
+      "keptId": 2377457,
+      "keptName": "Nouadhibou",
+      "replacementId": null,
+      "replacementName": null,
+      "originalConflictKm": 13.31,
+      "action": "remove_without_replacement"
     },
     {
       "removedId": 2363669,
@@ -1692,6 +1824,17 @@
       "originalConflictKm": 19.99
     },
     {
+      "removedId": 237478,
+      "removedName": "Mobaye",
+      "country": "CF",
+      "keptId": 216404,
+      "keptName": "Gbadolite",
+      "replacementId": null,
+      "replacementName": null,
+      "originalConflictKm": 19.99,
+      "action": "remove_without_replacement"
+    },
+    {
       "removedId": 3196681,
       "removedName": "Lendava",
       "country": "SI",
@@ -2346,25 +2489,25 @@
       "code": "EG",
       "thresholdKm": 25,
       "before": {
-        "count": 89,
-        "meanKm": 51.2,
+        "count": 88,
+        "meanKm": 51.3,
         "minKm": 25.1,
         "p10Km": 26.2,
         "p25Km": 26.9,
-        "medianKm": 32,
-        "p75Km": 53.4,
-        "p90Km": 89.5,
+        "medianKm": 31.7,
+        "p75Km": 49.3,
+        "p90Km": 94.7,
         "maxKm": 263.7
       },
       "after": {
-        "count": 89,
-        "meanKm": 51.2,
+        "count": 88,
+        "meanKm": 51.3,
         "minKm": 25.1,
         "p10Km": 26.2,
         "p25Km": 26.9,
-        "medianKm": 32,
-        "p75Km": 53.4,
-        "p90Km": 89.5,
+        "medianKm": 31.7,
+        "p75Km": 49.3,
+        "p90Km": 94.7,
         "maxKm": 263.7
       },
       "replacementCount": 0,
@@ -3633,28 +3776,28 @@
       "Code": "CD",
       "ThresholdKm": 25,
       "Before": {
-        "count": 106,
-        "meanKm": 80.8,
+        "count": 105,
+        "meanKm": 81.4,
         "minKm": 25.9,
         "p10Km": 32.8,
-        "p25Km": 48.8,
-        "medianKm": 76.4,
-        "p75Km": 105.5,
-        "p90Km": 128.4,
+        "p25Km": 48.7,
+        "medianKm": 75.9,
+        "p75Km": 105.8,
+        "p90Km": 131.7,
         "maxKm": 223.5
       },
       "After": {
-        "count": 106,
-        "meanKm": 80.8,
+        "count": 105,
+        "meanKm": 81.4,
         "minKm": 25.9,
         "p10Km": 32.8,
-        "p25Km": 48.8,
-        "medianKm": 76.4,
-        "p75Km": 105.5,
-        "p90Km": 128.4,
+        "p25Km": 48.7,
+        "medianKm": 75.9,
+        "p75Km": 105.8,
+        "p90Km": 131.7,
         "maxKm": 223.5
       },
-      "FinalCount": 106,
+      "FinalCount": 105,
       "QuotaReduction": 0,
       "ReplacementCount": 0,
       "RemovalWithoutReplacementCount": 0,
@@ -3666,28 +3809,28 @@
       "Code": "CF",
       "ThresholdKm": 25,
       "Before": {
-        "count": 48,
-        "meanKm": 76.4,
+        "count": 46,
+        "meanKm": 76.7,
         "minKm": 41.9,
-        "p10Km": 52.7,
-        "p25Km": 60.8,
-        "medianKm": 71.6,
-        "p75Km": 82.6,
-        "p90Km": 103.2,
+        "p10Km": 52.1,
+        "p25Km": 60.3,
+        "medianKm": 70.8,
+        "p75Km": 86.5,
+        "p90Km": 104.3,
         "maxKm": 155.5
       },
       "After": {
-        "count": 48,
-        "meanKm": 76.4,
+        "count": 46,
+        "meanKm": 76.7,
         "minKm": 41.9,
-        "p10Km": 52.7,
-        "p25Km": 60.8,
-        "medianKm": 71.6,
-        "p75Km": 82.6,
-        "p90Km": 103.2,
+        "p10Km": 52.1,
+        "p25Km": 60.3,
+        "medianKm": 70.8,
+        "p75Km": 86.5,
+        "p90Km": 104.3,
         "maxKm": 155.5
       },
-      "FinalCount": 48,
+      "FinalCount": 46,
       "QuotaReduction": 0,
       "ReplacementCount": 0,
       "RemovalWithoutReplacementCount": 0,
@@ -4458,28 +4601,28 @@
       "Code": "EG",
       "ThresholdKm": 25,
       "Before": {
-        "count": 89,
-        "meanKm": 51.2,
+        "count": 88,
+        "meanKm": 51.3,
         "minKm": 25.1,
         "p10Km": 26.2,
         "p25Km": 26.9,
-        "medianKm": 32,
-        "p75Km": 53.4,
-        "p90Km": 89.5,
+        "medianKm": 31.7,
+        "p75Km": 49.3,
+        "p90Km": 94.7,
         "maxKm": 263.7
       },
       "After": {
-        "count": 89,
-        "meanKm": 51.2,
+        "count": 88,
+        "meanKm": 51.3,
         "minKm": 25.1,
         "p10Km": 26.2,
         "p25Km": 26.9,
-        "medianKm": 32,
-        "p75Km": 53.4,
-        "p90Km": 89.5,
+        "medianKm": 31.7,
+        "p75Km": 49.3,
+        "p90Km": 94.7,
         "maxKm": 263.7
       },
-      "FinalCount": 89,
+      "FinalCount": 88,
       "QuotaReduction": 0,
       "ReplacementCount": 0,
       "RemovalWithoutReplacementCount": 0,
@@ -4491,28 +4634,28 @@
       "Code": "EH",
       "ThresholdKm": 25,
       "Before": {
-        "count": 21,
-        "meanKm": 81.1,
+        "count": 20,
+        "meanKm": 79.7,
         "minKm": 37,
-        "p10Km": 40.6,
-        "p25Km": 51,
+        "p10Km": 40.2,
+        "p25Km": 49.1,
         "medianKm": 86.9,
-        "p75Km": 106.1,
-        "p90Km": 117.3,
+        "p75Km": 101.7,
+        "p90Km": 119.4,
         "maxKm": 146.5
       },
       "After": {
-        "count": 21,
-        "meanKm": 81.1,
+        "count": 20,
+        "meanKm": 79.7,
         "minKm": 37,
-        "p10Km": 40.6,
-        "p25Km": 51,
+        "p10Km": 40.2,
+        "p25Km": 49.1,
         "medianKm": 86.9,
-        "p75Km": 106.1,
-        "p90Km": 117.3,
+        "p75Km": 101.7,
+        "p90Km": 119.4,
         "maxKm": 146.5
       },
-      "FinalCount": 21,
+      "FinalCount": 20,
       "QuotaReduction": 0,
       "ReplacementCount": 0,
       "RemovalWithoutReplacementCount": 0,
@@ -6878,28 +7021,28 @@
       "Code": "LY",
       "ThresholdKm": 25,
       "Before": {
-        "count": 67,
-        "meanKm": 65.2,
+        "count": 66,
+        "meanKm": 65.6,
         "minKm": 25.7,
         "p10Km": 30,
         "p25Km": 32.2,
-        "medianKm": 40,
-        "p75Km": 77,
-        "p90Km": 141.5,
+        "medianKm": 39.7,
+        "p75Km": 78.7,
+        "p90Km": 142.7,
         "maxKm": 276.4
       },
       "After": {
-        "count": 67,
-        "meanKm": 65.2,
+        "count": 66,
+        "meanKm": 65.6,
         "minKm": 25.7,
         "p10Km": 30,
         "p25Km": 32.2,
-        "medianKm": 40,
-        "p75Km": 77,
-        "p90Km": 141.5,
+        "medianKm": 39.7,
+        "p75Km": 78.7,
+        "p90Km": 142.7,
         "maxKm": 276.4
       },
-      "FinalCount": 67,
+      "FinalCount": 66,
       "QuotaReduction": 0,
       "ReplacementCount": 0,
       "RemovalWithoutReplacementCount": 0,
@@ -8096,28 +8239,28 @@
       "Code": "OM",
       "ThresholdKm": 25,
       "Before": {
-        "count": 28,
-        "meanKm": 54.3,
+        "count": 26,
+        "meanKm": 55.2,
         "minKm": 25.2,
-        "p10Km": 26.3,
-        "p25Km": 32.4,
-        "medianKm": 39.8,
-        "p75Km": 62,
-        "p90Km": 73.5,
+        "p10Km": 26.1,
+        "p25Km": 31.3,
+        "medianKm": 40.6,
+        "p75Km": 61.7,
+        "p90Km": 74.5,
         "maxKm": 298.7
       },
       "After": {
-        "count": 28,
-        "meanKm": 54.3,
+        "count": 26,
+        "meanKm": 55.2,
         "minKm": 25.2,
-        "p10Km": 26.3,
-        "p25Km": 32.4,
-        "medianKm": 39.8,
-        "p75Km": 62,
-        "p90Km": 73.5,
+        "p10Km": 26.1,
+        "p25Km": 31.3,
+        "medianKm": 40.6,
+        "p75Km": 61.7,
+        "p90Km": 74.5,
         "maxKm": 298.7
       },
-      "FinalCount": 28,
+      "FinalCount": 26,
       "QuotaReduction": 0,
       "ReplacementCount": 0,
       "RemovalWithoutReplacementCount": 0,
@@ -8777,14 +8920,14 @@
       "Code": "RW",
       "ThresholdKm": 25,
       "Before": {
-        "count": 16,
-        "meanKm": 30.7,
+        "count": 15,
+        "meanKm": 32,
         "minKm": 24.4,
         "p10Km": 24.4,
-        "p25Km": 25,
-        "medianKm": 27.3,
-        "p75Km": 36.1,
-        "p90Km": 40.5,
+        "p25Km": 24.8,
+        "medianKm": 33.2,
+        "p75Km": 37.8,
+        "p90Km": 40.9,
         "maxKm": 42.2
       },
       "After": {
@@ -8799,9 +8942,9 @@
         "maxKm": 47.7
       },
       "FinalCount": 15,
-      "QuotaReduction": 1,
-      "ReplacementCount": 1,
-      "RemovalWithoutReplacementCount": 1,
+      "QuotaReduction": 0,
+      "ReplacementCount": 2,
+      "RemovalWithoutReplacementCount": 0,
       "RemainingPairCountBelowThreshold": 0,
       "Replacements": [
         {
@@ -8814,18 +8957,20 @@
           "replacementName": "Gisenyi",
           "replacementPopulation": 172357,
           "originalDistanceKm": 24.4
-        }
-      ],
-      "RemovalsWithoutReplacement": [
+        },
         {
           "removedId": 201954,
           "removedName": "Mabanza",
           "removedPopulation": 13139,
           "keptId": 7662813,
           "keptName": "Mahembe",
+          "replacementId": 202326,
+          "replacementName": "Cyangugu",
+          "replacementPopulation": 43866,
           "originalDistanceKm": 24.4
         }
-      ]
+      ],
+      "RemovalsWithoutReplacement": []
     },
     {
       "Code": "SA",
@@ -9341,28 +9486,28 @@
       "Code": "SR",
       "ThresholdKm": 25,
       "Before": {
-        "count": 10,
-        "meanKm": 52.3,
+        "count": 8,
+        "meanKm": 43.5,
         "minKm": 30.5,
         "p10Km": 30.5,
-        "p25Km": 30.9,
-        "medianKm": 36.8,
-        "p75Km": 40.4,
-        "p90Km": 75.7,
-        "maxKm": 182
+        "p25Km": 30.8,
+        "medianKm": 32.4,
+        "p75Km": 45.8,
+        "p90Km": 71.1,
+        "maxKm": 87.8
       },
       "After": {
-        "count": 10,
-        "meanKm": 52.3,
+        "count": 8,
+        "meanKm": 43.5,
         "minKm": 30.5,
         "p10Km": 30.5,
-        "p25Km": 30.9,
-        "medianKm": 36.8,
-        "p75Km": 40.4,
-        "p90Km": 75.7,
-        "maxKm": 182
+        "p25Km": 30.8,
+        "medianKm": 32.4,
+        "p75Km": 45.8,
+        "p90Km": 71.1,
+        "maxKm": 87.8
       },
-      "FinalCount": 10,
+      "FinalCount": 8,
       "QuotaReduction": 0,
       "ReplacementCount": 0,
       "RemovalWithoutReplacementCount": 0,
@@ -10696,28 +10841,28 @@
       "Code": "ZM",
       "ThresholdKm": 25,
       "Before": {
-        "count": 74,
-        "meanKm": 59.2,
+        "count": 73,
+        "meanKm": 58.6,
         "minKm": 25.6,
         "p10Km": 29.1,
-        "p25Km": 35.5,
-        "medianKm": 47,
-        "p75Km": 72.8,
+        "p25Km": 35.1,
+        "medianKm": 46.7,
+        "p75Km": 69.9,
         "p90Km": 104.3,
         "maxKm": 159.3
       },
       "After": {
-        "count": 74,
-        "meanKm": 59.2,
+        "count": 73,
+        "meanKm": 58.6,
         "minKm": 25.6,
         "p10Km": 29.1,
-        "p25Km": 35.5,
-        "medianKm": 47,
-        "p75Km": 72.8,
+        "p25Km": 35.1,
+        "medianKm": 46.7,
+        "p75Km": 69.9,
         "p90Km": 104.3,
         "maxKm": 159.3
       },
-      "FinalCount": 74,
+      "FinalCount": 73,
       "QuotaReduction": 0,
       "ReplacementCount": 0,
       "RemovalWithoutReplacementCount": 0,
@@ -10729,28 +10874,28 @@
       "Code": "ZW",
       "ThresholdKm": 25,
       "Before": {
-        "count": 55,
-        "meanKm": 49.8,
+        "count": 54,
+        "meanKm": 49.1,
         "minKm": 26,
         "p10Km": 27.5,
         "p25Km": 32.2,
-        "medianKm": 40.3,
-        "p75Km": 53.7,
-        "p90Km": 84.4,
+        "medianKm": 39.7,
+        "p75Km": 52.9,
+        "p90Km": 80.3,
         "maxKm": 175.5
       },
       "After": {
-        "count": 55,
-        "meanKm": 49.8,
+        "count": 54,
+        "meanKm": 49.1,
         "minKm": 26,
         "p10Km": 27.5,
         "p25Km": 32.2,
-        "medianKm": 40.3,
-        "p75Km": 53.7,
-        "p90Km": 84.4,
+        "medianKm": 39.7,
+        "p75Km": 52.9,
+        "p90Km": 80.3,
         "maxKm": 175.5
       },
-      "FinalCount": 55,
+      "FinalCount": 54,
       "QuotaReduction": 0,
       "ReplacementCount": 0,
       "RemovalWithoutReplacementCount": 0,
@@ -10763,8 +10908,8 @@
     {
       "coefficient": 0.15,
       "rule": "min(25 km, coefficient * sqrt(areaKm2))",
-      "initialCityCount": 9907,
-      "finalCityCount": 9907,
+      "initialCityCount": 9894,
+      "finalCityCount": 9894,
       "quotaReduction": 0,
       "reducedCountryCount": 0,
       "reducedCountries": []
@@ -10772,28 +10917,19 @@
     {
       "coefficient": 0.2,
       "rule": "min(25 km, coefficient * sqrt(areaKm2))",
-      "initialCityCount": 9907,
-      "finalCityCount": 9906,
-      "quotaReduction": 1,
-      "reducedCountryCount": 1,
-      "reducedCountries": [
-        {
-          "code": "RW",
-          "areaKm2": 26338,
-          "thresholdKm": 25,
-          "initial": 16,
-          "final": 15,
-          "reduction": 1
-        }
-      ]
+      "initialCityCount": 9894,
+      "finalCityCount": 9894,
+      "quotaReduction": 0,
+      "reducedCountryCount": 0,
+      "reducedCountries": []
     },
     {
       "coefficient": 0.25,
       "rule": "min(25 km, coefficient * sqrt(areaKm2))",
-      "initialCityCount": 9907,
-      "finalCityCount": 9905,
-      "quotaReduction": 2,
-      "reducedCountryCount": 2,
+      "initialCityCount": 9894,
+      "finalCityCount": 9893,
+      "quotaReduction": 1,
+      "reducedCountryCount": 1,
       "reducedCountries": [
         {
           "code": "QA",
@@ -10802,23 +10938,15 @@
           "initial": 10,
           "final": 9,
           "reduction": 1
-        },
-        {
-          "code": "RW",
-          "areaKm2": 26338,
-          "thresholdKm": 25,
-          "initial": 16,
-          "final": 15,
-          "reduction": 1
         }
       ]
     }
   ],
   "adaptive25KmSummary": {
-    "initialCityCount": 9907,
-    "finalCityCount": 9895,
-    "quotaReduction": 12,
-    "reducedCountryCount": 9,
+    "initialCityCount": 9894,
+    "finalCityCount": 9883,
+    "quotaReduction": 11,
+    "reducedCountryCount": 8,
     "reducedCountries": [
       {
         "code": "SG",
@@ -10866,12 +10994,6 @@
         "code": "QA",
         "initial": 10,
         "final": 9,
-        "reduction": 1
-      },
-      {
-        "code": "RW",
-        "initial": 16,
-        "final": 15,
         "reduction": 1
       }
     ]
@@ -11279,8 +11401,8 @@
       "areaKm2": 2345410,
       "population": 84068091,
       "quota": 118,
-      "selected": 106,
-      "nearestMeanKm": 80.8,
+      "selected": 105,
+      "nearestMeanKm": 81.4,
       "nearestMinKm": 25.9,
       "nearestMaxKm": 223.5
     },
@@ -11290,8 +11412,8 @@
       "areaKm2": 622984,
       "population": 4666377,
       "quota": 51,
-      "selected": 48,
-      "nearestMeanKm": 76.4,
+      "selected": 46,
+      "nearestMeanKm": 76.7,
       "nearestMinKm": 41.9,
       "nearestMaxKm": 155.5
     },
@@ -11554,8 +11676,8 @@
       "areaKm2": 1001450,
       "population": 98423595,
       "quota": 117,
-      "selected": 89,
-      "nearestMeanKm": 51.2,
+      "selected": 88,
+      "nearestMeanKm": 51.3,
       "nearestMinKm": 25.1,
       "nearestMaxKm": 263.7
     },
@@ -11565,8 +11687,8 @@
       "areaKm2": 266000,
       "population": 273008,
       "quota": 21,
-      "selected": 21,
-      "nearestMeanKm": 81.1,
+      "selected": 20,
+      "nearestMeanKm": 79.7,
       "nearestMinKm": 37,
       "nearestMaxKm": 146.5
     },
@@ -12313,8 +12435,8 @@
       "areaKm2": 1759540,
       "population": 6678567,
       "quota": 86,
-      "selected": 67,
-      "nearestMeanKm": 65.2,
+      "selected": 66,
+      "nearestMeanKm": 65.6,
       "nearestMinKm": 25.7,
       "nearestMaxKm": 276.4
     },
@@ -12709,8 +12831,8 @@
       "areaKm2": 212460,
       "population": 4829483,
       "quota": 34,
-      "selected": 28,
-      "nearestMeanKm": 54.3,
+      "selected": 26,
+      "nearestMeanKm": 55.2,
       "nearestMinKm": 25.2,
       "nearestMaxKm": 298.7
     },
@@ -12918,8 +13040,8 @@
       "areaKm2": 26338,
       "population": 12301939,
       "quota": 18,
-      "selected": 16,
-      "nearestMeanKm": 30.7,
+      "selected": 15,
+      "nearestMeanKm": 32,
       "nearestMinKm": 24.4,
       "nearestMaxKm": 42.2
     },
@@ -13083,10 +13205,10 @@
       "areaKm2": 163270,
       "population": 575991,
       "quota": 20,
-      "selected": 10,
-      "nearestMeanKm": 52.3,
+      "selected": 8,
+      "nearestMeanKm": 43.5,
       "nearestMinKm": 30.5,
-      "nearestMaxKm": 182
+      "nearestMaxKm": 87.8
     },
     {
       "code": "SS",
@@ -13523,8 +13645,8 @@
       "areaKm2": 752614,
       "population": 17351822,
       "quota": 74,
-      "selected": 74,
-      "nearestMeanKm": 59.2,
+      "selected": 73,
+      "nearestMeanKm": 58.6,
       "nearestMinKm": 25.6,
       "nearestMaxKm": 159.3
     },
@@ -13534,40 +13656,13 @@
       "areaKm2": 390580,
       "population": 16868409,
       "quota": 56,
-      "selected": 55,
-      "nearestMeanKm": 49.8,
+      "selected": 54,
+      "nearestMeanKm": 49.1,
       "nearestMinKm": 26,
       "nearestMaxKm": 175.5
     }
   ],
   "closeCrossBorderPairs": [
-    {
-      "aId": 3380387,
-      "aName": "Saint-Laurent-du-Maroni",
-      "aCountry": "GF",
-      "bId": 3384792,
-      "bName": "Albina",
-      "bCountry": "SR",
-      "km": 2.91
-    },
-    {
-      "aId": 2310763,
-      "aName": "Zongo",
-      "aCountry": "CD",
-      "bId": 2389853,
-      "bName": "Bangui",
-      "bCountry": "CF",
-      "km": 4.83
-    },
-    {
-      "aId": 2313762,
-      "aName": "Libenge",
-      "aCountry": "CD",
-      "bId": 2384377,
-      "bName": "Mongoumba",
-      "bCountry": "CF",
-      "km": 4.84
-    },
     {
       "aId": 3579247,
       "aName": "Grand-Case",
@@ -13576,78 +13671,6 @@
       "bName": "Cul de Sac",
       "bCountry": "SX",
       "km": 6.37
-    },
-    {
-      "aId": 292231,
-      "aName": "Dibba Al-Fujairah",
-      "aCountry": "AE",
-      "bId": 11764763,
-      "bName": "M\u012Bn\u0101\u2019 Dab\u0101",
-      "bCountry": "OM",
-      "km": 6.47
-    },
-    {
-      "aId": 217831,
-      "aName": "Bukavu",
-      "aCountry": "CD",
-      "bId": 202326,
-      "bName": "Cyangugu",
-      "bCountry": "RW",
-      "km": 7.22
-    },
-    {
-      "aId": 292913,
-      "aName": "Al Ain City",
-      "aCountry": "AE",
-      "bId": 289317,
-      "bName": "Al Buraym\u012B",
-      "bCountry": "OM",
-      "km": 7.37
-    },
-    {
-      "aId": 3380994,
-      "aName": "Maripasoula",
-      "aCountry": "GF",
-      "bId": 6692148,
-      "bName": "Benzdorp (Monte Hermon)",
-      "bCountry": "SR",
-      "km": 8.67
-    },
-    {
-      "aId": 898188,
-      "aName": "Siavonga",
-      "aCountry": "ZM",
-      "bId": 889215,
-      "bName": "Kariba",
-      "bCountry": "ZW",
-      "km": 10.02
-    },
-    {
-      "aId": 910111,
-      "aName": "Livingstone",
-      "aCountry": "ZM",
-      "bId": 879431,
-      "bName": "Victoria Falls",
-      "bCountry": "ZW",
-      "km": 10.41
-    },
-    {
-      "aId": 347702,
-      "aName": "Taba",
-      "aCountry": "EG",
-      "bId": 250774,
-      "bName": "Aqaba",
-      "bCountry": "JO",
-      "km": 11.51
-    },
-    {
-      "aId": 359867,
-      "aName": "As Sall\u016Bm",
-      "aCountry": "EG",
-      "bId": 12687307,
-      "bName": "Umm S\u0101\u0027ad",
-      "bCountry": "LY",
-      "km": 11.97
     },
     {
       "aId": 3573374,
@@ -13659,15 +13682,6 @@
       "km": 12.49
     },
     {
-      "aId": 2462651,
-      "aName": "La G\u00FCera",
-      "aCountry": "EH",
-      "bId": 2377457,
-      "bName": "Nouadhibou",
-      "bCountry": "MR",
-      "km": 13.31
-    },
-    {
       "aId": 3573374,
       "aName": "The Valley",
       "aCountry": "AI",
@@ -13675,24 +13689,6 @@
       "bName": "Cul de Sac",
       "bCountry": "SX",
       "km": 18.75
-    },
-    {
-      "aId": 216404,
-      "aName": "Gbadolite",
-      "aCountry": "CD",
-      "bId": 237478,
-      "bName": "Mobaye",
-      "bCountry": "CF",
-      "km": 19.99
-    },
-    {
-      "aId": 347702,
-      "aName": "Taba",
-      "aCountry": "EG",
-      "bId": 106102,
-      "bName": "\u1E28aql",
-      "bCountry": "SA",
-      "km": 23.41
     }
   ]
 }
