@@ -77,6 +77,11 @@ static class WorldSelectionLab
                     };
                 }).ToList();
 
+            var internalSpacing25Km = new[] { "FR", "EG", "DZ" }
+                .Where(code => selected.ContainsKey(code) && candidates.ContainsKey(code))
+                .Select(code => BuildInternalSpacingTest(code, selected[code], candidates[code], 25.0))
+                .ToArray();
+
             var payload = new
             {
                 formula = formula.Id,
@@ -92,6 +97,7 @@ static class WorldSelectionLab
                 closeCrossBorderPairCount = closePairs.Count,
                 spacingReplacementCount = spacingChanges.Count,
                 spacingReplacements = spacingChanges,
+                internalSpacing25Km,
                 countries = countryRows,
                 closeCrossBorderPairs = closePairs.Select(x => new
                 {
@@ -207,6 +213,130 @@ static class WorldSelectionLab
         }
 
         return result;
+    }
+
+    static object BuildInternalSpacingTest(
+        string code,
+        IReadOnlyList<City> currentSelection,
+        IReadOnlyList<City> candidates,
+        double thresholdKm)
+    {
+        var before = currentSelection.ToList();
+        var after = currentSelection.ToList();
+        var candidatePool = candidates
+            .Where(c => after.All(s => s.Id != c.Id))
+            .OrderByDescending(c => c.Population)
+            .ToList();
+
+        var replacements = new List<object>();
+        var protectedPairs = new HashSet<(long, long)>();
+
+        for (var pass = 0; pass < 5000; pass++)
+        {
+            (City A, City B, double Km)? conflict = null;
+            for (var i = 0; i < after.Count && conflict is null; i++)
+            for (var j = i + 1; j < after.Count; j++)
+            {
+                var km = Geo.Km(after[i], after[j]);
+                if (km >= thresholdKm) continue;
+                var key = (Math.Min(after[i].Id, after[j].Id), Math.Max(after[i].Id, after[j].Id));
+                if (protectedPairs.Contains(key)) continue;
+                conflict = (after[i], after[j], km);
+                break;
+            }
+
+            if (conflict is null) break;
+
+            var pair = conflict.Value;
+            var remove = pair.A.Population <= pair.B.Population ? pair.A : pair.B;
+            var keep = remove.Id == pair.A.Id ? pair.B : pair.A;
+
+            City? replacement = null;
+            foreach (var candidate in candidatePool)
+            {
+                if (after.Any(s => s.Id != remove.Id && Geo.Km(candidate, s) < thresholdKm))
+                    continue;
+                replacement = candidate;
+                break;
+            }
+
+            if (replacement is null)
+            {
+                protectedPairs.Add((Math.Min(pair.A.Id, pair.B.Id), Math.Max(pair.A.Id, pair.B.Id)));
+                continue;
+            }
+
+            after.RemoveAll(x => x.Id == remove.Id);
+            after.Add(replacement);
+            candidatePool.RemoveAll(x => x.Id == replacement.Id);
+            candidatePool.Add(remove);
+            candidatePool = candidatePool.OrderByDescending(x => x.Population).ToList();
+
+            replacements.Add(new
+            {
+                removedId = remove.Id,
+                removedName = remove.Name,
+                removedPopulation = remove.Population,
+                keptId = keep.Id,
+                keptName = keep.Name,
+                replacementId = replacement.Id,
+                replacementName = replacement.Name,
+                replacementPopulation = replacement.Population,
+                originalDistanceKm = Math.Round(pair.Km, 1)
+            });
+        }
+
+        object Stats(IReadOnlyList<City> cities)
+        {
+            var nearest = new List<double>();
+            for (var i = 0; i < cities.Count; i++)
+            {
+                var d = double.PositiveInfinity;
+                for (var j = 0; j < cities.Count; j++)
+                    if (i != j) d = Math.Min(d, Geo.Km(cities[i], cities[j]));
+                if (!double.IsInfinity(d)) nearest.Add(d);
+            }
+            nearest.Sort();
+
+            double P(double q)
+            {
+                if (nearest.Count == 0) return 0;
+                var pos = (nearest.Count - 1) * q;
+                var lo = (int)Math.Floor(pos);
+                var hi = (int)Math.Ceiling(pos);
+                if (lo == hi) return nearest[lo];
+                return nearest[lo] + (nearest[hi] - nearest[lo]) * (pos - lo);
+            }
+
+            return new
+            {
+                count = cities.Count,
+                meanKm = Math.Round(nearest.Count == 0 ? 0 : nearest.Average(), 1),
+                minKm = Math.Round(nearest.Count == 0 ? 0 : nearest.Min(), 1),
+                p10Km = Math.Round(P(.10), 1),
+                p25Km = Math.Round(P(.25), 1),
+                medianKm = Math.Round(P(.50), 1),
+                p75Km = Math.Round(P(.75), 1),
+                p90Km = Math.Round(P(.90), 1),
+                maxKm = Math.Round(nearest.Count == 0 ? 0 : nearest.Max(), 1)
+            };
+        }
+
+        var remainingConflicts = 0;
+        for (var i = 0; i < after.Count; i++)
+        for (var j = i + 1; j < after.Count; j++)
+            if (Geo.Km(after[i], after[j]) < thresholdKm) remainingConflicts++;
+
+        return new
+        {
+            code,
+            thresholdKm,
+            before = Stats(before),
+            after = Stats(after),
+            replacementCount = replacements.Count,
+            remainingPairCountBelowThreshold = remainingConflicts,
+            replacements
+        };
     }
 
     static List<object> ApplyCrossBorderSpacing(
