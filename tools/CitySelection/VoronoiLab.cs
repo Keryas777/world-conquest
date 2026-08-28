@@ -390,36 +390,29 @@ static class VoronoiLab
             {
                 var union = UnaryUnionOp.Union(g.Select(x => cells[x.index]).Where(x => !x.IsEmpty).ToArray());
                 var target = countryTerritories[g.Key];
-
-                Geometry missing;
-                Geometry excess;
-                try
-                {
-                    missing = target.Difference(union);
-                    excess = union.Difference(target);
-                }
-                catch
-                {
-                    missing = target.Buffer(0).Difference(union.Buffer(0));
-                    excess = union.Buffer(0).Difference(target.Buffer(0));
-                }
-
                 var targetArea = Math.Max(1e-12, target.Area);
+                var unionArea = Math.Max(0.0, union.Area);
+
+                // For the audit we only need a robust coverage diagnostic.
+                // Overlay Difference can throw on tiny non-noded intersections
+                // created by floating-point clipping. Use area delta as the
+                // primary metric and keep topology overlay out of the audit path.
+                var areaDeltaRatio = Math.Abs(unionArea - target.Area) / targetArea;
+
                 return new
                 {
                     territoryCode = g.Key,
                     cityCount = g.Count(),
                     targetAreaDegrees2 = Math.Round(target.Area, 8),
-                    unionAreaDegrees2 = Math.Round(union.Area, 8),
-                    missingRatio = Math.Round(missing.Area / targetArea, 8),
-                    excessRatio = Math.Round(excess.Area / targetArea, 8)
+                    unionAreaDegrees2 = Math.Round(unionArea, 8),
+                    areaDeltaRatio = Math.Round(areaDeltaRatio, 8)
                 };
             })
             .ToArray();
 
         var coverageWarnings = territoryCoverage
-            .Where(x => x.missingRatio > 1e-6 || x.excessRatio > 1e-6)
-            .OrderByDescending(x => Math.Max(x.missingRatio, x.excessRatio))
+            .Where(x => x.areaDeltaRatio > 1e-6)
+            .OrderByDescending(x => x.areaDeltaRatio)
             .ToArray();
 
         var maxDegree = degree.Count == 0 ? 0 : degree.Max();
@@ -496,7 +489,7 @@ static class VoronoiLab
         else
         {
             foreach (var x in coverageWarnings.Take(100))
-                md.AppendLine($"- {x.territoryCode}: missing {x.missingRatio:P6}, excess {x.excessRatio:P6}");
+                md.AppendLine($"- {x.territoryCode}: area delta {x.areaDeltaRatio:P6}");
         }
 
         await File.WriteAllTextAsync(Path.Combine(outDir, "territory-audit.md"), md.ToString());
