@@ -274,7 +274,7 @@ static class VoronoiLab
             var city = cities[i];
             var geometry = cells[i];
 
-            if (geometry.IsEmpty || geometry.Dimension < Dimension.Surface || geometry.Area <= 0)
+            if (geometry.IsEmpty || geometry.Dimension != Dimension.Surface || geometry.Area <= 0)
                 empty.Add(new { city.Id, city.Name, city.Country });
 
             if (!geometry.IsEmpty && !geometry.IsValid)
@@ -481,7 +481,7 @@ static class VoronoiLab
         md.AppendLine();
         md.AppendLine("## Cells with 0 or 1 terrestrial neighbour");
         md.AppendLine();
-        foreach (var x in lowDegree)
+        foreach (dynamic x in lowDegree)
             md.AppendLine($"- {x.Name} ({x.Country}) — degree {x.degree} — id {x.Id}");
         md.AppendLine();
         md.AppendLine("## Seeds outside their generated cell");
