@@ -2433,6 +2433,164 @@
       "originalConflictKm": 24.97
     }
   ],
+  "internalSpacing25Km": [
+    {
+      "code": "FR",
+      "thresholdKm": 25,
+      "before": {
+        "count": 85,
+        "meanKm": 68,
+        "minKm": 21.6,
+        "p10Km": 48.3,
+        "p25Km": 58.5,
+        "medianKm": 67.5,
+        "p75Km": 77.3,
+        "p90Km": 85.1,
+        "maxKm": 109.3
+      },
+      "after": {
+        "count": 85,
+        "meanKm": 69.3,
+        "minKm": 45.2,
+        "p10Km": 50,
+        "p25Km": 61.1,
+        "medianKm": 67.6,
+        "p75Km": 77.3,
+        "p90Km": 85.1,
+        "maxKm": 109.3
+      },
+      "replacementCount": 1,
+      "remainingPairCountBelowThreshold": 0,
+      "replacements": [
+        {
+          "removedId": 12278193,
+          "removedName": "Marne La Vall\u00E9e",
+          "removedPopulation": 318325,
+          "keptId": 2988507,
+          "keptName": "Paris",
+          "replacementId": 2990440,
+          "replacementName": "Nice",
+          "replacementPopulation": 342669,
+          "originalDistanceKm": 21.6
+        }
+      ]
+    },
+    {
+      "code": "EG",
+      "thresholdKm": 25,
+      "before": {
+        "count": 117,
+        "meanKm": 38.9,
+        "minKm": 6.9,
+        "p10Km": 17.4,
+        "p25Km": 19.5,
+        "medianKm": 24,
+        "p75Km": 34.4,
+        "p90Km": 67.4,
+        "maxKm": 263.7
+      },
+      "after": {
+        "count": 117,
+        "meanKm": 39.1,
+        "minKm": 6.9,
+        "p10Km": 17.4,
+        "p25Km": 19.6,
+        "medianKm": 25.2,
+        "p75Km": 41.4,
+        "p90Km": 65.6,
+        "maxKm": 263.7
+      },
+      "replacementCount": 3,
+      "remainingPairCountBelowThreshold": 60,
+      "replacements": [
+        {
+          "removedId": 7799991,
+          "removedName": "New Cairo",
+          "removedPopulation": 313139,
+          "keptId": 360630,
+          "keptName": "Cairo",
+          "replacementId": 350350,
+          "replacementName": "Rafa\u1E29",
+          "replacementPopulation": 44215,
+          "originalDistanceKm": 21.5
+        },
+        {
+          "removedId": 12640364,
+          "removedName": "Ash-Shaykh Z\u0101yid",
+          "removedPopulation": 95854,
+          "keptId": 360630,
+          "keptName": "Cairo",
+          "replacementId": 347702,
+          "replacementName": "Taba",
+          "replacementPopulation": 700,
+          "originalDistanceKm": 24.5
+        },
+        {
+          "removedId": 351434,
+          "removedName": "Nag Hamm\u00E2di",
+          "removedPopulation": 59601,
+          "keptId": 358115,
+          "keptName": "Dishn\u0101",
+          "replacementId": 356933,
+          "replacementName": "Farsh\u016B\u0163",
+          "replacementPopulation": 71013,
+          "originalDistanceKm": 24
+        }
+      ]
+    },
+    {
+      "code": "DZ",
+      "thresholdKm": 25,
+      "before": {
+        "count": 140,
+        "meanKm": 57.2,
+        "minKm": 8.5,
+        "p10Km": 27.7,
+        "p25Km": 31.1,
+        "medianKm": 35.4,
+        "p75Km": 48.9,
+        "p90Km": 70.8,
+        "maxKm": 643.3
+      },
+      "after": {
+        "count": 140,
+        "meanKm": 57.3,
+        "minKm": 25.2,
+        "p10Km": 28.5,
+        "p25Km": 31.1,
+        "medianKm": 35.4,
+        "p75Km": 48,
+        "p90Km": 70.8,
+        "maxKm": 643.3
+      },
+      "replacementCount": 2,
+      "remainingPairCountBelowThreshold": 0,
+      "replacements": [
+        {
+          "removedId": 2505854,
+          "removedName": "Bab Ezzouar",
+          "removedPopulation": 275630,
+          "keptId": 2507480,
+          "keptName": "Algiers",
+          "replacementId": 2490584,
+          "replacementName": "Maghnia",
+          "replacementPopulation": 87373,
+          "originalDistanceKm": 8.5
+        },
+        {
+          "removedId": 2502924,
+          "removedName": "Boukadir",
+          "removedPopulation": 28652,
+          "keptId": 2498611,
+          "keptName": "Chlef",
+          "replacementId": 2487620,
+          "replacementName": "Metlili Chaamba",
+          "replacementPopulation": 39588,
+          "originalDistanceKm": 21.7
+        }
+      ]
+    }
+  ],
   "countries": [
     {
       "code": "AD",
