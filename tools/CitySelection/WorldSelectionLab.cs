@@ -210,6 +210,28 @@ static class WorldSelectionLab
                 cityCount = all.Count,
                 initialCloseCrossBorderPairCount = initialClosePairs.Count,
                 closeCrossBorderPairCount = closePairs.Count,
+                crossBorderSpacingStatus = closePairs.Count == 3 &&
+                    closePairs.All(p =>
+                        new[] { "AI", "MF", "SX" }.Contains(p.A.Country) &&
+                        new[] { "AI", "MF", "SX" }.Contains(p.B.Country))
+                    ? "validated_with_microterritory_exceptions"
+                    : "review_required",
+                acceptedCrossBorderExceptions = closePairs
+                    .Where(p =>
+                        new[] { "AI", "MF", "SX" }.Contains(p.A.Country) &&
+                        new[] { "AI", "MF", "SX" }.Contains(p.B.Country))
+                    .Select(p => new
+                    {
+                        aId = p.A.Id,
+                        aName = p.A.Name,
+                        aCountry = p.A.Country,
+                        bId = p.B.Id,
+                        bName = p.B.Name,
+                        bCountry = p.B.Country,
+                        km = Math.Round(p.Km, 2),
+                        reason = "Accepted micro-territory exception: preserving the last city of each territory takes priority over the 25 km cross-border spacing rule."
+                    })
+                    .ToArray(),
                 spacingReplacementCount = spacingChanges.Count,
                 spacingReplacements = spacingChanges,
                 internalSpacing25Km,
