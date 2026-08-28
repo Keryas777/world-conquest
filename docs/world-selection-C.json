@@ -14534,6 +14534,718 @@
       ]
     }
   ],
+  "scaled25KmExperiments": [
+    {
+      "coefficient": 0.15,
+      "rule": "min(25 km, coefficient * sqrt(areaKm2))",
+      "initialCityCount": 10144,
+      "finalCityCount": 9909,
+      "quotaReduction": 235,
+      "reducedCountryCount": 28,
+      "reducedCountries": [
+        {
+          "code": "EG",
+          "areaKm2": 1001450,
+          "thresholdKm": 25,
+          "initial": 117,
+          "final": 89,
+          "reduction": 28
+        },
+        {
+          "code": "SD",
+          "areaKm2": 1861484,
+          "thresholdKm": 25,
+          "initial": 101,
+          "final": 77,
+          "reduction": 24
+        },
+        {
+          "code": "LY",
+          "areaKm2": 1759540,
+          "thresholdKm": 25,
+          "initial": 86,
+          "final": 67,
+          "reduction": 19
+        },
+        {
+          "code": "SA",
+          "areaKm2": 1960582,
+          "thresholdKm": 25,
+          "initial": 123,
+          "final": 105,
+          "reduction": 18
+        },
+        {
+          "code": "YE",
+          "areaKm2": 527970,
+          "thresholdKm": 25,
+          "initial": 53,
+          "final": 35,
+          "reduction": 18
+        },
+        {
+          "code": "ML",
+          "areaKm2": 1240000,
+          "thresholdKm": 25,
+          "initial": 77,
+          "final": 63,
+          "reduction": 14
+        },
+        {
+          "code": "CD",
+          "areaKm2": 2345410,
+          "thresholdKm": 25,
+          "initial": 118,
+          "final": 106,
+          "reduction": 12
+        },
+        {
+          "code": "GY",
+          "areaKm2": 214970,
+          "thresholdKm": 25,
+          "initial": 22,
+          "final": 12,
+          "reduction": 10
+        },
+        {
+          "code": "PG",
+          "areaKm2": 462840,
+          "thresholdKm": 25,
+          "initial": 53,
+          "final": 43,
+          "reduction": 10
+        },
+        {
+          "code": "SR",
+          "areaKm2": 163270,
+          "thresholdKm": 25,
+          "initial": 20,
+          "final": 10,
+          "reduction": 10
+        },
+        {
+          "code": "JO",
+          "areaKm2": 92300,
+          "thresholdKm": 25,
+          "initial": 28,
+          "final": 20,
+          "reduction": 8
+        },
+        {
+          "code": "AE",
+          "areaKm2": 82880,
+          "thresholdKm": 25,
+          "initial": 27,
+          "final": 20,
+          "reduction": 7
+        },
+        {
+          "code": "NE",
+          "areaKm2": 1267000,
+          "thresholdKm": 25,
+          "initial": 73,
+          "final": 66,
+          "reduction": 7
+        },
+        {
+          "code": "TD",
+          "areaKm2": 1284000,
+          "thresholdKm": 25,
+          "initial": 74,
+          "final": 67,
+          "reduction": 7
+        },
+        {
+          "code": "KW",
+          "areaKm2": 17820,
+          "thresholdKm": 20,
+          "initial": 12,
+          "final": 6,
+          "reduction": 6
+        },
+        {
+          "code": "OM",
+          "areaKm2": 212460,
+          "thresholdKm": 25,
+          "initial": 34,
+          "final": 28,
+          "reduction": 6
+        },
+        {
+          "code": "MW",
+          "areaKm2": 118480,
+          "thresholdKm": 25,
+          "initial": 35,
+          "final": 30,
+          "reduction": 5
+        },
+        {
+          "code": "MZ",
+          "areaKm2": 801590,
+          "thresholdKm": 25,
+          "initial": 84,
+          "final": 79,
+          "reduction": 5
+        },
+        {
+          "code": "MN",
+          "areaKm2": 1565000,
+          "thresholdKm": 25,
+          "initial": 52,
+          "final": 48,
+          "reduction": 4
+        },
+        {
+          "code": "CF",
+          "areaKm2": 622984,
+          "thresholdKm": 25,
+          "initial": 51,
+          "final": 48,
+          "reduction": 3
+        },
+        {
+          "code": "LR",
+          "areaKm2": 111370,
+          "thresholdKm": 25,
+          "initial": 26,
+          "final": 23,
+          "reduction": 3
+        },
+        {
+          "code": "ER",
+          "areaKm2": 121320,
+          "thresholdKm": 25,
+          "initial": 18,
+          "final": 16,
+          "reduction": 2
+        },
+        {
+          "code": "GF",
+          "areaKm2": 91000,
+          "thresholdKm": 25,
+          "initial": 13,
+          "final": 11,
+          "reduction": 2
+        },
+        {
+          "code": "GL",
+          "areaKm2": 2166086,
+          "thresholdKm": 25,
+          "initial": 18,
+          "final": 16,
+          "reduction": 2
+        },
+        {
+          "code": "NP",
+          "areaKm2": 140800,
+          "thresholdKm": 25,
+          "initial": 42,
+          "final": 40,
+          "reduction": 2
+        },
+        {
+          "code": "BI",
+          "areaKm2": 27830,
+          "thresholdKm": 25,
+          "initial": 18,
+          "final": 17,
+          "reduction": 1
+        },
+        {
+          "code": "RW",
+          "areaKm2": 26338,
+          "thresholdKm": 24.3,
+          "initial": 18,
+          "final": 17,
+          "reduction": 1
+        },
+        {
+          "code": "ZW",
+          "areaKm2": 390580,
+          "thresholdKm": 25,
+          "initial": 56,
+          "final": 55,
+          "reduction": 1
+        }
+      ]
+    },
+    {
+      "coefficient": 0.2,
+      "rule": "min(25 km, coefficient * sqrt(areaKm2))",
+      "initialCityCount": 10144,
+      "finalCityCount": 9908,
+      "quotaReduction": 236,
+      "reducedCountryCount": 28,
+      "reducedCountries": [
+        {
+          "code": "EG",
+          "areaKm2": 1001450,
+          "thresholdKm": 25,
+          "initial": 117,
+          "final": 89,
+          "reduction": 28
+        },
+        {
+          "code": "SD",
+          "areaKm2": 1861484,
+          "thresholdKm": 25,
+          "initial": 101,
+          "final": 77,
+          "reduction": 24
+        },
+        {
+          "code": "LY",
+          "areaKm2": 1759540,
+          "thresholdKm": 25,
+          "initial": 86,
+          "final": 67,
+          "reduction": 19
+        },
+        {
+          "code": "SA",
+          "areaKm2": 1960582,
+          "thresholdKm": 25,
+          "initial": 123,
+          "final": 105,
+          "reduction": 18
+        },
+        {
+          "code": "YE",
+          "areaKm2": 527970,
+          "thresholdKm": 25,
+          "initial": 53,
+          "final": 35,
+          "reduction": 18
+        },
+        {
+          "code": "ML",
+          "areaKm2": 1240000,
+          "thresholdKm": 25,
+          "initial": 77,
+          "final": 63,
+          "reduction": 14
+        },
+        {
+          "code": "CD",
+          "areaKm2": 2345410,
+          "thresholdKm": 25,
+          "initial": 118,
+          "final": 106,
+          "reduction": 12
+        },
+        {
+          "code": "GY",
+          "areaKm2": 214970,
+          "thresholdKm": 25,
+          "initial": 22,
+          "final": 12,
+          "reduction": 10
+        },
+        {
+          "code": "PG",
+          "areaKm2": 462840,
+          "thresholdKm": 25,
+          "initial": 53,
+          "final": 43,
+          "reduction": 10
+        },
+        {
+          "code": "SR",
+          "areaKm2": 163270,
+          "thresholdKm": 25,
+          "initial": 20,
+          "final": 10,
+          "reduction": 10
+        },
+        {
+          "code": "JO",
+          "areaKm2": 92300,
+          "thresholdKm": 25,
+          "initial": 28,
+          "final": 20,
+          "reduction": 8
+        },
+        {
+          "code": "AE",
+          "areaKm2": 82880,
+          "thresholdKm": 25,
+          "initial": 27,
+          "final": 20,
+          "reduction": 7
+        },
+        {
+          "code": "NE",
+          "areaKm2": 1267000,
+          "thresholdKm": 25,
+          "initial": 73,
+          "final": 66,
+          "reduction": 7
+        },
+        {
+          "code": "TD",
+          "areaKm2": 1284000,
+          "thresholdKm": 25,
+          "initial": 74,
+          "final": 67,
+          "reduction": 7
+        },
+        {
+          "code": "KW",
+          "areaKm2": 17820,
+          "thresholdKm": 25,
+          "initial": 12,
+          "final": 6,
+          "reduction": 6
+        },
+        {
+          "code": "OM",
+          "areaKm2": 212460,
+          "thresholdKm": 25,
+          "initial": 34,
+          "final": 28,
+          "reduction": 6
+        },
+        {
+          "code": "MW",
+          "areaKm2": 118480,
+          "thresholdKm": 25,
+          "initial": 35,
+          "final": 30,
+          "reduction": 5
+        },
+        {
+          "code": "MZ",
+          "areaKm2": 801590,
+          "thresholdKm": 25,
+          "initial": 84,
+          "final": 79,
+          "reduction": 5
+        },
+        {
+          "code": "MN",
+          "areaKm2": 1565000,
+          "thresholdKm": 25,
+          "initial": 52,
+          "final": 48,
+          "reduction": 4
+        },
+        {
+          "code": "CF",
+          "areaKm2": 622984,
+          "thresholdKm": 25,
+          "initial": 51,
+          "final": 48,
+          "reduction": 3
+        },
+        {
+          "code": "LR",
+          "areaKm2": 111370,
+          "thresholdKm": 25,
+          "initial": 26,
+          "final": 23,
+          "reduction": 3
+        },
+        {
+          "code": "ER",
+          "areaKm2": 121320,
+          "thresholdKm": 25,
+          "initial": 18,
+          "final": 16,
+          "reduction": 2
+        },
+        {
+          "code": "GF",
+          "areaKm2": 91000,
+          "thresholdKm": 25,
+          "initial": 13,
+          "final": 11,
+          "reduction": 2
+        },
+        {
+          "code": "GL",
+          "areaKm2": 2166086,
+          "thresholdKm": 25,
+          "initial": 18,
+          "final": 16,
+          "reduction": 2
+        },
+        {
+          "code": "NP",
+          "areaKm2": 140800,
+          "thresholdKm": 25,
+          "initial": 42,
+          "final": 40,
+          "reduction": 2
+        },
+        {
+          "code": "RW",
+          "areaKm2": 26338,
+          "thresholdKm": 25,
+          "initial": 18,
+          "final": 16,
+          "reduction": 2
+        },
+        {
+          "code": "BI",
+          "areaKm2": 27830,
+          "thresholdKm": 25,
+          "initial": 18,
+          "final": 17,
+          "reduction": 1
+        },
+        {
+          "code": "ZW",
+          "areaKm2": 390580,
+          "thresholdKm": 25,
+          "initial": 56,
+          "final": 55,
+          "reduction": 1
+        }
+      ]
+    },
+    {
+      "coefficient": 0.25,
+      "rule": "min(25 km, coefficient * sqrt(areaKm2))",
+      "initialCityCount": 10144,
+      "finalCityCount": 9907,
+      "quotaReduction": 237,
+      "reducedCountryCount": 29,
+      "reducedCountries": [
+        {
+          "code": "EG",
+          "areaKm2": 1001450,
+          "thresholdKm": 25,
+          "initial": 117,
+          "final": 89,
+          "reduction": 28
+        },
+        {
+          "code": "SD",
+          "areaKm2": 1861484,
+          "thresholdKm": 25,
+          "initial": 101,
+          "final": 77,
+          "reduction": 24
+        },
+        {
+          "code": "LY",
+          "areaKm2": 1759540,
+          "thresholdKm": 25,
+          "initial": 86,
+          "final": 67,
+          "reduction": 19
+        },
+        {
+          "code": "SA",
+          "areaKm2": 1960582,
+          "thresholdKm": 25,
+          "initial": 123,
+          "final": 105,
+          "reduction": 18
+        },
+        {
+          "code": "YE",
+          "areaKm2": 527970,
+          "thresholdKm": 25,
+          "initial": 53,
+          "final": 35,
+          "reduction": 18
+        },
+        {
+          "code": "ML",
+          "areaKm2": 1240000,
+          "thresholdKm": 25,
+          "initial": 77,
+          "final": 63,
+          "reduction": 14
+        },
+        {
+          "code": "CD",
+          "areaKm2": 2345410,
+          "thresholdKm": 25,
+          "initial": 118,
+          "final": 106,
+          "reduction": 12
+        },
+        {
+          "code": "GY",
+          "areaKm2": 214970,
+          "thresholdKm": 25,
+          "initial": 22,
+          "final": 12,
+          "reduction": 10
+        },
+        {
+          "code": "PG",
+          "areaKm2": 462840,
+          "thresholdKm": 25,
+          "initial": 53,
+          "final": 43,
+          "reduction": 10
+        },
+        {
+          "code": "SR",
+          "areaKm2": 163270,
+          "thresholdKm": 25,
+          "initial": 20,
+          "final": 10,
+          "reduction": 10
+        },
+        {
+          "code": "JO",
+          "areaKm2": 92300,
+          "thresholdKm": 25,
+          "initial": 28,
+          "final": 20,
+          "reduction": 8
+        },
+        {
+          "code": "AE",
+          "areaKm2": 82880,
+          "thresholdKm": 25,
+          "initial": 27,
+          "final": 20,
+          "reduction": 7
+        },
+        {
+          "code": "NE",
+          "areaKm2": 1267000,
+          "thresholdKm": 25,
+          "initial": 73,
+          "final": 66,
+          "reduction": 7
+        },
+        {
+          "code": "TD",
+          "areaKm2": 1284000,
+          "thresholdKm": 25,
+          "initial": 74,
+          "final": 67,
+          "reduction": 7
+        },
+        {
+          "code": "KW",
+          "areaKm2": 17820,
+          "thresholdKm": 25,
+          "initial": 12,
+          "final": 6,
+          "reduction": 6
+        },
+        {
+          "code": "OM",
+          "areaKm2": 212460,
+          "thresholdKm": 25,
+          "initial": 34,
+          "final": 28,
+          "reduction": 6
+        },
+        {
+          "code": "MW",
+          "areaKm2": 118480,
+          "thresholdKm": 25,
+          "initial": 35,
+          "final": 30,
+          "reduction": 5
+        },
+        {
+          "code": "MZ",
+          "areaKm2": 801590,
+          "thresholdKm": 25,
+          "initial": 84,
+          "final": 79,
+          "reduction": 5
+        },
+        {
+          "code": "MN",
+          "areaKm2": 1565000,
+          "thresholdKm": 25,
+          "initial": 52,
+          "final": 48,
+          "reduction": 4
+        },
+        {
+          "code": "CF",
+          "areaKm2": 622984,
+          "thresholdKm": 25,
+          "initial": 51,
+          "final": 48,
+          "reduction": 3
+        },
+        {
+          "code": "LR",
+          "areaKm2": 111370,
+          "thresholdKm": 25,
+          "initial": 26,
+          "final": 23,
+          "reduction": 3
+        },
+        {
+          "code": "ER",
+          "areaKm2": 121320,
+          "thresholdKm": 25,
+          "initial": 18,
+          "final": 16,
+          "reduction": 2
+        },
+        {
+          "code": "GF",
+          "areaKm2": 91000,
+          "thresholdKm": 25,
+          "initial": 13,
+          "final": 11,
+          "reduction": 2
+        },
+        {
+          "code": "GL",
+          "areaKm2": 2166086,
+          "thresholdKm": 25,
+          "initial": 18,
+          "final": 16,
+          "reduction": 2
+        },
+        {
+          "code": "NP",
+          "areaKm2": 140800,
+          "thresholdKm": 25,
+          "initial": 42,
+          "final": 40,
+          "reduction": 2
+        },
+        {
+          "code": "RW",
+          "areaKm2": 26338,
+          "thresholdKm": 25,
+          "initial": 18,
+          "final": 16,
+          "reduction": 2
+        },
+        {
+          "code": "BI",
+          "areaKm2": 27830,
+          "thresholdKm": 25,
+          "initial": 18,
+          "final": 17,
+          "reduction": 1
+        },
+        {
+          "code": "QA",
+          "areaKm2": 11437,
+          "thresholdKm": 25,
+          "initial": 10,
+          "final": 9,
+          "reduction": 1
+        },
+        {
+          "code": "ZW",
+          "areaKm2": 390580,
+          "thresholdKm": 25,
+          "initial": 56,
+          "final": 55,
+          "reduction": 1
+        }
+      ]
+    }
+  ],
   "adaptive25KmSummary": {
     "initialCityCount": 10144,
     "finalCityCount": 9897,
