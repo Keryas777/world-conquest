@@ -862,17 +862,22 @@ static class VoronoiLab
             // World Conquest treats the full geographic territory as independent.
             // Select the largest Western-Sahara-labelled disputed polygon: this is
             // the complete territory with the straight northern boundary around 27.66°N.
-            var fullWesternSahara = westernSaharaCandidates
-                .OrderByDescending(g => g.Area)
-                .FirstOrDefault();
-
-            if (fullWesternSahara is null || fullWesternSahara.IsEmpty)
+            if (westernSaharaCandidates.Count == 0)
                 throw new InvalidOperationException(
-                    "Full Western Sahara disputed geometry missing from Natural Earth.");
+                    "Western Sahara disputed geometries missing from Natural Earth.");
 
-            var eh = fullWesternSahara.IsValid
-                ? fullWesternSahara
-                : fullWesternSahara.Buffer(0);
+            Geometry eh;
+            try
+            {
+                eh = UnaryUnionOp.Union(westernSaharaCandidates);
+            }
+            catch
+            {
+                eh = UnaryUnionOp.Union(
+                    westernSaharaCandidates.Select(g => g.Buffer(0)).ToArray());
+            }
+
+            if (!eh.IsValid) eh = eh.Buffer(0);
             result["EH"] = eh;
 
             if (result.TryGetValue("MA", out var morocco))
@@ -892,7 +897,7 @@ static class VoronoiLab
             }
 
             Console.WriteLine(
-                $"World Conquest territory override: largest full Western Sahara polygon -> EH " +
+                $"World Conquest territory override: union of {westernSaharaCandidates.Count} Western Sahara feature(s) -> EH " +
                 $"(area={eh.Area:F4}), removed from MA.");
         }
 
