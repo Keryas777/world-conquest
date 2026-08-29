@@ -33,6 +33,18 @@ static class WorldSelectionLab
     const double InternalSpacingCoefficient = 0.15;
     const double InternalSpacingMaxKm = 25.0;
 
+    // Explicit gameplay-scale exclusions. These GeoNames points represent
+    // subscale islands or archipelago administrative localities that do not
+    // justify a dedicated World Conquest cell at the reference map scale.
+    // Filtering candidates (rather than deleting after selection) lets the
+    // normal selector choose a replacement for the same country quota.
+    static readonly HashSet<long> GameplayScaleExcludedCityIds = new()
+    {
+        12382279, // Sansha (CN)
+        1684606,  // Taganak (PH)
+        11496092  // Hoàng Sa (VN)
+    };
+
     public static async Task<Dictionary<string, List<City>>> GenerateAsync(HttpClient http, string outDir)
     {
         var countries = await LoadCountryInfoAsync(http);
@@ -353,6 +365,8 @@ static class WorldSelectionLab
             if (!long.TryParse(f[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var id)) continue;
             if (!double.TryParse(f[4], NumberStyles.Float, CultureInfo.InvariantCulture, out var lat)) continue;
             if (!double.TryParse(f[5], NumberStyles.Float, CultureInfo.InvariantCulture, out var lon)) continue;
+
+            if (GameplayScaleExcludedCityIds.Contains(id)) continue;
 
             if (!result.TryGetValue(code, out var list))
                 result[code] = list = new List<City>();
