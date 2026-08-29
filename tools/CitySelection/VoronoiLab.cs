@@ -21,6 +21,31 @@ static class VoronoiLab
     static string OwnerCode(string territoryCode) =>
         FrenchOwnedTerritories.Contains(territoryCode) ? "FR" : territoryCode;
 
+    // World Conquest political model: Crimea is an independent starting territory.
+    const string CrimeaTerritoryCode = "XC";
+    static readonly HashSet<long> CrimeaCityIds = new()
+    {
+        694423,  // Sevastopol
+        706524,  // Kerch
+        692315,  // Sudak
+        693805,  // Simferopol
+        688105   // Yevpatoriya
+    };
+
+    static readonly HashSet<long> MissingIslandCityIds = new()
+    {
+        400747,    // Abū Mūsá
+        12382279,  // Sansha
+        1684606,   // Taganak
+        7552914,   // Nangan
+        11496092,  // Hoàng Sa
+        13535608,  // Bạch Long Vĩ
+        13512695   // Thổ Châu
+    };
+
+    static string TerritoryCode(City city) =>
+        CrimeaCityIds.Contains(city.Id) ? CrimeaTerritoryCode : city.Country;
+
     static readonly Dictionary<string, string[]> TerritoryNameAliases =
         new(StringComparer.OrdinalIgnoreCase)
         {
@@ -39,14 +64,14 @@ static class VoronoiLab
         IReadOnlyDictionary<string, List<City>> worldSelection,
         double populationWeight = .60)
     {
-        var selected = worldSelection.ToDictionary(
-            x => x.Key,
-            x => x.Value.ToList(),
-            StringComparer.OrdinalIgnoreCase);
+        var sourceCities = worldSelection.Values.SelectMany(x => x).ToList();
+        var selected = sourceCities
+            .GroupBy(TerritoryCode, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
         var quotas = selected.ToDictionary(x => x.Key, x => x.Value.Count, StringComparer.OrdinalIgnoreCase);
         var cities = selected.Values.SelectMany(x => x).ToList();
 
-        Console.WriteLine($"Worldwide Voronoi input: {cities.Count:N0} selected cities in {selected.Count} countries.");
+        Console.WriteLine($"Worldwide Voronoi input: {cities.Count:N0} selected cities in {selected.Count} territories.");
 
         var referenceLat = cities.Average(c => c.Lat) * Math.PI / 180.0;
         var cosLat = Math.Cos(referenceLat);
@@ -55,6 +80,7 @@ static class VoronoiLab
         // country's current Natural Earth 10m territory. This guarantees that at T0
         // the union of a country's cells reconstructs its present-day border/coastline.
         var countryTerritories = await LoadCountryTerritoriesAsync(http, quotas.Keys);
+        await ApplyMissingIslandPatchesAsync(http, countryTerritories, cities);
         var clippedCells = Enumerable.Repeat<Geometry>(GeometryFactory.CreatePolygon(), cities.Count).ToList();
         var voronoiCandidates = new HashSet<(int A, int B)>();
 
@@ -133,7 +159,7 @@ static class VoronoiLab
         // Cross-border adjacency: only compare cells from countries whose
         // Natural Earth envelopes touch. This avoids an O(n²) world scan.
         var indicesByCountry = cities
-            .Select((city, index) => (city.Country, index))
+            .Select((city, index) => (Country: TerritoryCode(city), index))
             .GroupBy(x => x.Country, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.Select(x => x.index).ToArray(), StringComparer.OrdinalIgnoreCase);
         var countryCodes = selected.Keys.ToArray();
@@ -189,8 +215,8 @@ static class VoronoiLab
             id = city.Id,
             name = city.Name,
             country = city.Country,
-            territoryCode = city.Country,
-            ownerCode = OwnerCode(city.Country),
+            territoryCode = TerritoryCode(city),
+            ownerCode = OwnerCode(TerritoryCode(city)),
             lat = city.Lat,
             lon = city.Lon,
             population = city.Population,
@@ -203,9 +229,9 @@ static class VoronoiLab
             {
                 a = cities[x.A].Id,
                 b = cities[x.B].Id,
-                foreign = OwnerCode(cities[x.A].Country) != OwnerCode(cities[x.B].Country),
-                aOwner = OwnerCode(cities[x.A].Country),
-                bOwner = OwnerCode(cities[x.B].Country),
+                foreign = OwnerCode(TerritoryCode(cities[x.A])) != OwnerCode(TerritoryCode(cities[x.B])),
+                aOwner = OwnerCode(TerritoryCode(cities[x.A])),
+                bOwner = OwnerCode(TerritoryCode(cities[x.B])),
                 km = Math.Round(Geo.Km(cities[x.A], cities[x.B]), 1)
             }).ToList();
 
@@ -277,7 +303,7 @@ static class VoronoiLab
             var geometry = cells[i];
 
             var seed = GeometryFactory.CreatePoint(new Coordinate(city.Lon, city.Lat));
-            var territory = countryTerritories[city.Country];
+            var territory = countryTerritories[TerritoryCode(city)];
             var seedInTerritory = territory.Covers(seed);
             var distanceToTerritory = seedInTerritory ? 0.0 : territory.Distance(seed);
 
@@ -287,6 +313,7 @@ static class VoronoiLab
                     city.Id,
                     city.Name,
                     city.Country,
+                    territoryCode = TerritoryCode(city),
                     city.Lat,
                     city.Lon,
                     seedInTerritory,
@@ -327,6 +354,7 @@ static class VoronoiLab
                     city.Id,
                     city.Name,
                     city.Country,
+                    territoryCode = TerritoryCode(city),
                     degree = degree[i],
                     city.Lat,
                     city.Lon
@@ -409,7 +437,7 @@ static class VoronoiLab
 
         var territoryCoverage = cities
             .Select((city, index) => (city, index))
-            .GroupBy(x => x.city.Country, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(x => TerritoryCode(x.city), StringComparer.OrdinalIgnoreCase)
             .OrderBy(g => g.Key)
             .Select(g =>
             {
@@ -464,7 +492,7 @@ static class VoronoiLab
             summary = new
             {
                 cellCount = cities.Count,
-                territoryCount = cities.Select(x => x.Country).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                territoryCount = cities.Select(TerritoryCode).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
                 edgeCount = adjacency.Count,
                 meanDegree = Math.Round(meanDegree, 3),
                 maxDegree,
@@ -616,6 +644,83 @@ static class VoronoiLab
         return null;
     }
 
+    static async Task ApplyMissingIslandPatchesAsync(
+        HttpClient http,
+        IDictionary<string, Geometry> territories,
+        IReadOnlyList<City> cities)
+    {
+        var targets = cities.Where(c => MissingIslandCityIds.Contains(c.Id)).ToArray();
+        if (targets.Length == 0) return;
+
+        var cacheDir = Path.Combine("data", "raw", "natural-earth");
+        Directory.CreateDirectory(cacheDir);
+        var fileName = "ne_10m_minor_islands.geojson";
+        var path = Path.Combine(cacheDir, fileName);
+        if (!File.Exists(path))
+        {
+            var url =
+                "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/" + fileName;
+            var json = await http.GetStringAsync(url);
+            await File.WriteAllTextAsync(path, json);
+        }
+
+        using var document = JsonDocument.Parse(await File.ReadAllTextAsync(path));
+        var islandGeometries = document.RootElement.GetProperty("features").EnumerateArray()
+            .Select(feature => ParseGeoJsonGeometry(feature.GetProperty("geometry")))
+            .Where(g => g is not null && !g.IsEmpty)
+            .Cast<Geometry>()
+            .ToArray();
+
+        foreach (var city in targets)
+        {
+            var territoryCode = TerritoryCode(city);
+            if (!territories.TryGetValue(territoryCode, out var territory)) continue;
+
+            var seed = GeometryFactory.CreatePoint(new Coordinate(city.Lon, city.Lat));
+            if (territory.Covers(seed)) continue;
+
+            var matches = islandGeometries
+                .Select(g => new { Geometry = g, Distance = g.Distance(seed) })
+                .Where(x => x.Geometry.Covers(seed) || x.Distance <= 0.08)
+                .OrderBy(x => x.Distance)
+                .ThenBy(x => x.Geometry.Area)
+                .ToArray();
+
+            if (matches.Length == 0)
+            {
+                Console.WriteLine(
+                    $"Minor-island patch unresolved: {city.Name} ({territoryCode}) — no Natural Earth island near seed.");
+                continue;
+            }
+
+            // Use every polygon effectively touching the seed cluster. This keeps
+            // archipelago fragments together without inventing synthetic land.
+            var bestDistance = matches[0].Distance;
+            var patchParts = matches
+                .Where(x => x.Distance <= Math.Max(0.01, bestDistance + 0.01))
+                .Select(x => x.Geometry)
+                .ToArray();
+
+            var patch = UnaryUnionOp.Union(patchParts);
+            Geometry merged;
+            try
+            {
+                merged = UnaryUnionOp.Union(new[] { territory, patch });
+            }
+            catch
+            {
+                merged = UnaryUnionOp.Union(new[] { territory.Buffer(0), patch.Buffer(0) });
+            }
+
+            if (!merged.IsValid) merged = merged.Buffer(0);
+            territories[territoryCode] = merged;
+
+            Console.WriteLine(
+                $"Minor-island patch: {city.Name} ({territoryCode}) +{patchParts.Length} polygon(s), " +
+                $"nearest={bestDistance:F4}°.");
+        }
+    }
+
     static async Task<Dictionary<string, Geometry>> LoadCountryTerritoriesAsync(
         HttpClient http,
         IEnumerable<string> countryCodes)
@@ -636,7 +741,8 @@ static class VoronoiLab
         {
             "ne_10m_admin_0_countries_iso.geojson",
             "ne_10m_admin_0_map_units.geojson",
-            "ne_10m_admin_0_map_subunits.geojson"
+            "ne_10m_admin_0_map_subunits.geojson",
+            "ne_10m_admin_0_scale_rank_minor_islands.geojson"
         };
 
         foreach (var fileName in sources)
@@ -670,6 +776,40 @@ static class VoronoiLab
 
             Console.WriteLine(
                 $"Natural Earth territory source {fileName}: {matchedFeatures:N0} matching feature(s).");
+        }
+
+        if (wanted.Contains(CrimeaTerritoryCode))
+        {
+            var disputedFile = "ne_10m_admin_0_disputed_areas.geojson";
+            var disputedPath = Path.Combine(cacheDir, disputedFile);
+            if (!File.Exists(disputedPath))
+            {
+                var url =
+                    "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/" + disputedFile;
+                var json = await http.GetStringAsync(url);
+                await File.WriteAllTextAsync(disputedPath, json);
+            }
+
+            using var disputedDocument = JsonDocument.Parse(await File.ReadAllTextAsync(disputedPath));
+            foreach (var feature in disputedDocument.RootElement.GetProperty("features").EnumerateArray())
+            {
+                var properties = feature.GetProperty("properties");
+                string? name = null;
+                foreach (var key in new[] { "NAME", "NAME_LONG", "SUBUNIT", "BRK_NAME" })
+                {
+                    if (!properties.TryGetProperty(key, out var value) || value.ValueKind != JsonValueKind.String)
+                        continue;
+                    name = value.GetString();
+                    if (!string.IsNullOrWhiteSpace(name)) break;
+                }
+
+                if (!string.Equals(name, "Crimea", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var geometry = ParseGeoJsonGeometry(feature.GetProperty("geometry"));
+                if (geometry is not null && !geometry.IsEmpty)
+                    partsByCode[CrimeaTerritoryCode].Add(geometry);
+            }
         }
 
         var result = new Dictionary<string, Geometry>(StringComparer.OrdinalIgnoreCase);
