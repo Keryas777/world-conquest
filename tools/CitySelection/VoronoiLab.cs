@@ -776,7 +776,8 @@ static class VoronoiLab
         }
 
         Geometry? crimeaOverride = null;
-        if (wanted.Contains(CrimeaTerritoryCode))
+        var westernSaharaCandidates = new List<Geometry>();
+        if (wanted.Contains(CrimeaTerritoryCode) || wanted.Contains("EH"))
         {
             var disputedFile = "ne_10m_admin_0_disputed_areas.geojson";
             var disputedPath = Path.Combine(cacheDir, disputedFile);
@@ -815,6 +816,15 @@ static class VoronoiLab
                     crimeaOverride = geometry;
                 }
 
+                if (wanted.Contains("EH") &&
+                    (string.Equals(isoA2Eh, "EH", StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(nameSort, "Western Sahara", StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(breakName, "W. Sahara", StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(nameLong, "Western Sahara", StringComparison.OrdinalIgnoreCase)))
+                {
+                    westernSaharaCandidates.Add(geometry);
+                }
+
             }
         }
 
@@ -847,29 +857,18 @@ static class VoronoiLab
 
         if (wanted.Contains("EH"))
         {
-            // The ISO country layer contains the complete geographic Western Sahara
-            // polygon (bbox approx. -17.10/20.77 to -8.68/27.66). Do not use the
-            // disputed-area layer here: that represents only the Morocco-administered
-            // claim area and left our EH geometry fragmented.
-            var isoPath = Path.Combine(cacheDir, "ne_10m_admin_0_countries_iso.geojson");
-            using var isoDocument = JsonDocument.Parse(await File.ReadAllTextAsync(isoPath));
-            Geometry? fullWesternSahara = null;
-
-            foreach (var feature in isoDocument.RootElement.GetProperty("features").EnumerateArray())
-            {
-                var properties = feature.GetProperty("properties");
-                if (!properties.TryGetProperty("ISO_A2", out var iso) ||
-                    iso.ValueKind != JsonValueKind.String ||
-                    !string.Equals(iso.GetString(), "EH", StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                fullWesternSahara = ParseGeoJsonGeometry(feature.GetProperty("geometry"));
-                break;
-            }
+            // Natural Earth exposes several Western Sahara disputed-area features.
+            // Some are only partial administration/claim geometries. For gameplay,
+            // World Conquest treats the full geographic territory as independent.
+            // Select the largest Western-Sahara-labelled disputed polygon: this is
+            // the complete territory with the straight northern boundary around 27.66°N.
+            var fullWesternSahara = westernSaharaCandidates
+                .OrderByDescending(g => g.Area)
+                .FirstOrDefault();
 
             if (fullWesternSahara is null || fullWesternSahara.IsEmpty)
                 throw new InvalidOperationException(
-                    "Full Western Sahara geometry (ISO_A2=EH) missing from Natural Earth ISO layer.");
+                    "Full Western Sahara disputed geometry missing from Natural Earth.");
 
             var eh = fullWesternSahara.IsValid
                 ? fullWesternSahara
@@ -893,7 +892,8 @@ static class VoronoiLab
             }
 
             Console.WriteLine(
-                "World Conquest territory override: complete ISO Western Sahara -> EH, removed from MA.");
+                $"World Conquest territory override: largest full Western Sahara polygon -> EH " +
+                $"(area={eh.Area:F4}), removed from MA.");
         }
 
         var missing = wanted.Where(code => !result.ContainsKey(code)).OrderBy(x => x).ToArray();
