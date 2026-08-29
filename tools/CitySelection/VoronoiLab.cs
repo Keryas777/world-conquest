@@ -35,10 +35,7 @@ static class VoronoiLab
     static readonly HashSet<long> MissingIslandCityIds = new()
     {
         400747,    // Abū Mūsá
-        12382279,  // Sansha
-        1684606,   // Taganak
         7552914,   // Nangan
-        11496092,  // Hoàng Sa
         13535608,  // Bạch Long Vĩ
         13512695   // Thổ Châu
     };
