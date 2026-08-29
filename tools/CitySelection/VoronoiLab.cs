@@ -775,7 +775,10 @@ static class VoronoiLab
                 $"Natural Earth territory source {fileName}: {matchedFeatures:N0} matching feature(s).");
         }
 
-        if (wanted.Contains(CrimeaTerritoryCode))
+        Geometry? crimeaOverride = null;
+        Geometry? westernSaharaOverride = null;
+
+        if (wanted.Contains(CrimeaTerritoryCode) || wanted.Contains("EH"))
         {
             var disputedFile = "ne_10m_admin_0_disputed_areas.geojson";
             var disputedPath = Path.Combine(cacheDir, disputedFile);
@@ -791,21 +794,36 @@ static class VoronoiLab
             foreach (var feature in disputedDocument.RootElement.GetProperty("features").EnumerateArray())
             {
                 var properties = feature.GetProperty("properties");
-                string? name = null;
-                foreach (var key in new[] { "NAME", "NAME_LONG", "SUBUNIT", "BRK_NAME" })
-                {
-                    if (!properties.TryGetProperty(key, out var value) || value.ValueKind != JsonValueKind.String)
-                        continue;
-                    name = value.GetString();
-                    if (!string.IsNullOrWhiteSpace(name)) break;
-                }
 
-                if (!string.Equals(name, "Crimea", StringComparison.OrdinalIgnoreCase))
-                    continue;
+                string? ReadString(string key) =>
+                    properties.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String
+                        ? value.GetString()
+                        : null;
+
+                var name = ReadString("NAME");
+                var nameLong = ReadString("NAME_LONG");
+                var subunit = ReadString("SUBUNIT");
+                var breakName = ReadString("BRK_NAME");
+                var nameSort = ReadString("NAME_SORT");
+                var isoA2Eh = ReadString("ISO_A2_EH");
 
                 var geometry = ParseGeoJsonGeometry(feature.GetProperty("geometry"));
-                if (geometry is not null && !geometry.IsEmpty)
-                    partsByCode[CrimeaTerritoryCode].Add(geometry);
+                if (geometry is null || geometry.IsEmpty) continue;
+
+                if (wanted.Contains(CrimeaTerritoryCode) &&
+                    new[] { name, nameLong, subunit, breakName }
+                        .Any(x => string.Equals(x, "Crimea", StringComparison.OrdinalIgnoreCase)))
+                {
+                    crimeaOverride = geometry;
+                }
+
+                if (wanted.Contains("EH") &&
+                    (string.Equals(isoA2Eh, "EH", StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(nameSort, "Western Sahara", StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(breakName, "W. Sahara", StringComparison.OrdinalIgnoreCase)))
+                {
+                    westernSaharaOverride = geometry;
+                }
             }
         }
 
@@ -827,6 +845,40 @@ static class VoronoiLab
 
             if (!geometry.IsValid) geometry = geometry.Buffer(0);
             result[code] = geometry;
+        }
+
+        if (crimeaOverride is not null)
+        {
+            var geometry = crimeaOverride.IsValid ? crimeaOverride : crimeaOverride.Buffer(0);
+            result[CrimeaTerritoryCode] = geometry;
+            Console.WriteLine("World Conquest territory override: Crimea -> XC.");
+        }
+
+        if (westernSaharaOverride is not null)
+        {
+            var eh = westernSaharaOverride.IsValid
+                ? westernSaharaOverride
+                : westernSaharaOverride.Buffer(0);
+            result["EH"] = eh;
+
+            if (result.TryGetValue("MA", out var morocco))
+            {
+                Geometry trimmedMorocco;
+                try
+                {
+                    trimmedMorocco = morocco.Difference(eh);
+                }
+                catch
+                {
+                    trimmedMorocco = morocco.Buffer(0).Difference(eh.Buffer(0));
+                }
+
+                if (!trimmedMorocco.IsValid) trimmedMorocco = trimmedMorocco.Buffer(0);
+                result["MA"] = trimmedMorocco;
+            }
+
+            Console.WriteLine(
+                "World Conquest territory override: full Western Sahara -> EH, removed from MA.");
         }
 
         var missing = wanted.Where(code => !result.ContainsKey(code)).OrderBy(x => x).ToArray();
