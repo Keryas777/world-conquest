@@ -17,6 +17,7 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b1520;fon
 .border-layer{pointer-events:none;opacity:0;transition:opacity 1000ms ease-in-out;will-change:opacity}
 .border-layer path{fill:none;stroke:var(--border);stroke-width:.75;vector-effect:non-scaling-stroke}
 .border-layer.border-active{opacity:1}
+.eh-border{fill:none;stroke:var(--border);stroke-width:.75;vector-effect:non-scaling-stroke;pointer-events:none}
 .territory-fill-layer,.territory-internal-layer{pointer-events:none}
 .territory-cell{stroke-width:.8;stroke-linejoin:round;vector-effect:non-scaling-stroke}
 .territory-internal-layer path{fill:none;stroke:#fff;stroke-width:.55;vector-effect:non-scaling-stroke}
@@ -75,11 +76,14 @@ button.active{background:#fff;color:#17222c;border-color:#fff}
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
 <script>
 const svg=d3.select("#map");
+const defs=svg.append("defs");
+const ehBorderMask=defs.append("mask").attr("id","eh-border-mask").attr("maskUnits","userSpaceOnUse");
 const mapRoot=svg.append("g").attr("class","map-root");
 const fillRoot=mapRoot.append("g").attr("class","fill-root");
 const territoryFillRoot=mapRoot.append("g").attr("class","territory-fill-layer");
 const territoryInternalRoot=mapRoot.append("g").attr("class","territory-internal-layer");
-const borderRoot=mapRoot.append("g").attr("class","border-root");
+const borderRoot=mapRoot.append("g").attr("class","border-root").attr("mask","url(#eh-border-mask)");
+const ehBorderRoot=mapRoot.append("g").attr("class","eh-border-root");
 const cityLinkRoot=mapRoot.append("g").attr("class","city-link-layer");
 const cityRoot=mapRoot.append("g").attr("class","city-layer");
 const lodLayers={},borderLayers={};
@@ -192,13 +196,7 @@ function viewName(){return currentLod==="110"?"Monde":currentLod==="50"?"Contine
 function countryFill(){
  return getComputedStyle(document.body).getPropertyValue("--neutral").trim()||"#bfc2c3";
 }
-function isWesternSaharaFeature(feature){
- const p=feature.properties||{};
- return [p.ADMIN,p.NAME,p.NAME_LONG,p.NAME_SORT,p.BRK_NAME].some(name=>
-   typeof name==="string"&&(/^(Western Sahara|W\. Sahara)$/i).test(name)
- )||[p.ADM0_A3,p.SOV_A3,p.GU_A3].some(code=>code==="SAH");
-}
-function westernSaharaExterior(features){
+function territoryExterior(features){
  const segments=new Map();
  const addRing=ring=>{
   for(let i=1;i<ring.length;i++){
@@ -253,11 +251,7 @@ async function prepareLod(lod,foreground=false){
    // Frontières indépendantes des aplats : elles ne participent pas au crossfade.
    let borders=borderLayers[lod];
    if(!borders)borders=borderLayers[lod]=borderRoot.append("g").attr("class","border-layer border-"+lod);
-   const westernSaharaFeatures=features.filter(isWesternSaharaFeature);
-   const borderFeatures=features.filter(feature=>!isWesternSaharaFeature(feature));
-   if(westernSaharaFeatures.length)
-     borderFeatures.push({id:"WC_EH_EXTERIOR",geometry:westernSaharaExterior(westernSaharaFeatures)});
-   borders.selectAll("path").data(borderFeatures,d=>d.id||d.properties?.ADM0_A3||d.properties?.ISO_A3).join("path").attr("d",path);
+   borders.selectAll("path").data(features,d=>d.id||d.properties?.ADM0_A3||d.properties?.ISO_A3).join("path").attr("d",path);
    prepared.add(lod);
  }catch(e){console.error(e);document.querySelector("#status").textContent="Erreur LOD "+lod+"m";}
  if(foreground)setLoading(false);
@@ -328,6 +322,10 @@ function drawTerritories(){if(!territoryData||!path)return;
  cityById=new Map(territoryData.cells.map(d=>[d.id,d]));
  neighborMap=new Map(territoryData.cells.map(d=>[d.id,[]]));
  buildOwnerColors();
+ const ehCells=territoryData.cells.filter(d=>d.territoryCode==="EH"&&d.geometry);
+ ehBorderMask.selectAll("rect").data([null]).join("rect").attr("width",W).attr("height",H).attr("fill","white");
+ ehBorderMask.selectAll("path").data(ehCells,d=>d.id).join("path").attr("d",d=>path(d.geometry)).attr("fill","black").attr("stroke","black").attr("stroke-width",1).attr("vector-effect","non-scaling-stroke");
+ ehBorderRoot.selectAll("path").data(ehCells.length?[territoryExterior(ehCells)]:[]).join("path").attr("class","eh-border").attr("d",path);
  territoryFillRoot.selectAll("path.territory-cell").data(territoryData.cells,d=>d.id).join("path").attr("class","territory-cell").attr("fill",d=>territoryColors[d.ownerCode||d.country]||"#9aa0a6").attr("stroke",d=>territoryColors[d.ownerCode||d.country]||"#9aa0a6").attr("d",d=>d.geometry?path(d.geometry):null);territoryInternalRoot.selectAll("path").data(territoryData.cells,d=>d.id).join("path").attr("d",d=>d.geometry?path(d.geometry):null);
  for(const e of (territoryData.edges||[])){
   if(neighborMap.has(e.a))neighborMap.get(e.a).push({...e,other:e.b});
@@ -418,6 +416,7 @@ document.querySelector("#city-info-close").onclick=closeCityInfo;
 async function loadTerritories(){try{const r=await fetch("voronoi-graph.json",{cache:"no-cache"});if(!r.ok)throw new Error("voronoi-graph HTTP "+r.status);territoryData=await r.json();drawTerritories();updateStatus()}catch(e){console.error(e);document.querySelector("#status").textContent="Erreur couche territoriale"}}
 async function resize(){
  W=innerWidth;H=innerHeight;svg.attr("viewBox",[0,0,W,H]);
+ ehBorderMask.selectAll("rect").data([null]).join("rect").attr("width",W).attr("height",H).attr("fill","white");
  projection=d3.geoNaturalEarth1().fitExtent([[8,70],[W-8,H-100]],{type:"Sphere"});
  path=d3.geoPath(projection);
  drawTerritories();
