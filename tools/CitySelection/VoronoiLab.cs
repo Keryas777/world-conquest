@@ -82,6 +82,7 @@ static class VoronoiLab
         var selected = sourceCities
             .GroupBy(AssignedTerritoryCode, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+        var quotas = selected.ToDictionary(x => x.Key, x => x.Value.Count, StringComparer.OrdinalIgnoreCase);
         var cities = selected.Values.SelectMany(x => x).ToList();
 
         Console.WriteLine($"Worldwide Voronoi input: {cities.Count:N0} selected cities in {selected.Count} territories.");
@@ -288,7 +289,8 @@ static class VoronoiLab
             clippedCells,
             adjacency,
             degree,
-            countryTerritories);
+            countryTerritories,
+            AssignedTerritoryCode);
 
         Console.WriteLine(
             $"Voronoi lab: {cities.Count} country-constrained cells, " +
@@ -301,7 +303,8 @@ static class VoronoiLab
         IReadOnlyList<Geometry> cells,
         IReadOnlySet<(int A, int B)> adjacency,
         IReadOnlyList<int> degree,
-        IReadOnlyDictionary<string, Geometry> countryTerritories)
+        IReadOnlyDictionary<string, Geometry> countryTerritories,
+        Func<City, string> assignedTerritoryCode)
     {
         var empty = new List<object>();
         var invalid = new List<object>();
@@ -315,7 +318,7 @@ static class VoronoiLab
             var geometry = cells[i];
 
             var seed = GeometryFactory.CreatePoint(new Coordinate(city.Lon, city.Lat));
-            var territory = countryTerritories[AssignedTerritoryCode(city)];
+            var territory = countryTerritories[assignedTerritoryCode(city)];
             var seedInTerritory = territory.Covers(seed);
             var distanceToTerritory = seedInTerritory ? 0.0 : territory.Distance(seed);
 
@@ -325,7 +328,7 @@ static class VoronoiLab
                     city.Id,
                     city.Name,
                     city.Country,
-                    territoryCode = AssignedTerritoryCode(city),
+                    territoryCode = assignedTerritoryCode(city),
                     city.Lat,
                     city.Lon,
                     seedInTerritory,
@@ -366,7 +369,7 @@ static class VoronoiLab
                     city.Id,
                     city.Name,
                     city.Country,
-                    territoryCode = AssignedTerritoryCode(city),
+                    territoryCode = assignedTerritoryCode(city),
                     degree = degree[i],
                     city.Lat,
                     city.Lon
@@ -449,7 +452,7 @@ static class VoronoiLab
 
         var territoryCoverage = cities
             .Select((city, index) => (city, index))
-            .GroupBy(x => AssignedTerritoryCode(x.city), StringComparer.OrdinalIgnoreCase)
+            .GroupBy(x => assignedTerritoryCode(x.city), StringComparer.OrdinalIgnoreCase)
             .OrderBy(g => g.Key)
             .Select(g =>
             {
@@ -504,7 +507,7 @@ static class VoronoiLab
             summary = new
             {
                 cellCount = cities.Count,
-                territoryCount = cities.Select(AssignedTerritoryCode).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                territoryCount = cities.Select(assignedTerritoryCode).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
                 edgeCount = adjacency.Count,
                 meanDegree = Math.Round(meanDegree, 3),
                 maxDegree,
