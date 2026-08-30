@@ -62,10 +62,26 @@ static class VoronoiLab
         double populationWeight = .60)
     {
         var sourceCities = worldSelection.Values.SelectMany(x => x).ToList();
+        var countryTerritories = await LoadCountryTerritoriesAsync(
+            http,
+            sourceCities.Select(TerritoryCode).Distinct(StringComparer.OrdinalIgnoreCase));
+
+        // GeoNames assigns the Moroccan country code to some seeds located inside
+        // the World Conquest EH override. Classify those seeds against the same
+        // reconstructed geometry that will clip their Voronoi cells.
+        var westernSaharaCityIds = sourceCities
+            .Where(city => string.Equals(city.Country, "MA", StringComparison.OrdinalIgnoreCase))
+            .Where(city => countryTerritories["EH"].Covers(
+                GeometryFactory.CreatePoint(new Coordinate(city.Lon, city.Lat))))
+            .Select(city => city.Id)
+            .ToHashSet();
+
+        string AssignedTerritoryCode(City city) =>
+            westernSaharaCityIds.Contains(city.Id) ? "EH" : TerritoryCode(city);
+
         var selected = sourceCities
-            .GroupBy(TerritoryCode, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(AssignedTerritoryCode, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
-        var quotas = selected.ToDictionary(x => x.Key, x => x.Value.Count, StringComparer.OrdinalIgnoreCase);
         var cities = selected.Values.SelectMany(x => x).ToList();
 
         Console.WriteLine($"Worldwide Voronoi input: {cities.Count:N0} selected cities in {selected.Count} territories.");
@@ -76,8 +92,7 @@ static class VoronoiLab
         // Canonical initial territories: each country's cities partition only that
         // country's current Natural Earth 10m territory. This guarantees that at T0
         // the union of a country's cells reconstructs its present-day border/coastline.
-        var countryTerritories = await LoadCountryTerritoriesAsync(http, quotas.Keys);
-        await ApplyMissingIslandPatchesAsync(http, countryTerritories, cities);
+        await ApplyMissingIslandPatchesAsync(http, countryTerritories, cities, AssignedTerritoryCode);
         var clippedCells = Enumerable.Repeat<Geometry>(GeometryFactory.CreatePolygon(), cities.Count).ToList();
         var voronoiCandidates = new HashSet<(int A, int B)>();
 
@@ -156,7 +171,7 @@ static class VoronoiLab
         // Cross-border adjacency: only compare cells from countries whose
         // Natural Earth envelopes touch. This avoids an O(n²) world scan.
         var indicesByCountry = cities
-            .Select((city, index) => (Country: TerritoryCode(city), index))
+            .Select((city, index) => (Country: AssignedTerritoryCode(city), index))
             .GroupBy(x => x.Country, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.Select(x => x.index).ToArray(), StringComparer.OrdinalIgnoreCase);
         var countryCodes = selected.Keys.ToArray();
@@ -212,8 +227,8 @@ static class VoronoiLab
             id = city.Id,
             name = city.Name,
             country = city.Country,
-            territoryCode = TerritoryCode(city),
-            ownerCode = OwnerCode(TerritoryCode(city)),
+            territoryCode = AssignedTerritoryCode(city),
+            ownerCode = OwnerCode(AssignedTerritoryCode(city)),
             lat = city.Lat,
             lon = city.Lon,
             population = city.Population,
@@ -226,9 +241,9 @@ static class VoronoiLab
             {
                 a = cities[x.A].Id,
                 b = cities[x.B].Id,
-                foreign = OwnerCode(TerritoryCode(cities[x.A])) != OwnerCode(TerritoryCode(cities[x.B])),
-                aOwner = OwnerCode(TerritoryCode(cities[x.A])),
-                bOwner = OwnerCode(TerritoryCode(cities[x.B])),
+                foreign = OwnerCode(AssignedTerritoryCode(cities[x.A])) != OwnerCode(AssignedTerritoryCode(cities[x.B])),
+                aOwner = OwnerCode(AssignedTerritoryCode(cities[x.A])),
+                bOwner = OwnerCode(AssignedTerritoryCode(cities[x.B])),
                 km = Math.Round(Geo.Km(cities[x.A], cities[x.B]), 1)
             }).ToList();
 
@@ -300,7 +315,7 @@ static class VoronoiLab
             var geometry = cells[i];
 
             var seed = GeometryFactory.CreatePoint(new Coordinate(city.Lon, city.Lat));
-            var territory = countryTerritories[TerritoryCode(city)];
+            var territory = countryTerritories[AssignedTerritoryCode(city)];
             var seedInTerritory = territory.Covers(seed);
             var distanceToTerritory = seedInTerritory ? 0.0 : territory.Distance(seed);
 
@@ -310,7 +325,7 @@ static class VoronoiLab
                     city.Id,
                     city.Name,
                     city.Country,
-                    territoryCode = TerritoryCode(city),
+                    territoryCode = AssignedTerritoryCode(city),
                     city.Lat,
                     city.Lon,
                     seedInTerritory,
@@ -351,7 +366,7 @@ static class VoronoiLab
                     city.Id,
                     city.Name,
                     city.Country,
-                    territoryCode = TerritoryCode(city),
+                    territoryCode = AssignedTerritoryCode(city),
                     degree = degree[i],
                     city.Lat,
                     city.Lon
@@ -434,7 +449,7 @@ static class VoronoiLab
 
         var territoryCoverage = cities
             .Select((city, index) => (city, index))
-            .GroupBy(x => TerritoryCode(x.city), StringComparer.OrdinalIgnoreCase)
+            .GroupBy(x => AssignedTerritoryCode(x.city), StringComparer.OrdinalIgnoreCase)
             .OrderBy(g => g.Key)
             .Select(g =>
             {
@@ -489,7 +504,7 @@ static class VoronoiLab
             summary = new
             {
                 cellCount = cities.Count,
-                territoryCount = cities.Select(TerritoryCode).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                territoryCount = cities.Select(AssignedTerritoryCode).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
                 edgeCount = adjacency.Count,
                 meanDegree = Math.Round(meanDegree, 3),
                 maxDegree,
@@ -644,7 +659,8 @@ static class VoronoiLab
     static async Task ApplyMissingIslandPatchesAsync(
         HttpClient http,
         IDictionary<string, Geometry> territories,
-        IReadOnlyList<City> cities)
+        IReadOnlyList<City> cities,
+        Func<City, string> territoryCodeForCity)
     {
         var targets = cities.Where(c => MissingIslandCityIds.Contains(c.Id)).ToArray();
         if (targets.Length == 0) return;
@@ -670,7 +686,7 @@ static class VoronoiLab
 
         foreach (var city in targets)
         {
-            var territoryCode = TerritoryCode(city);
+            var territoryCode = territoryCodeForCity(city);
             if (!territories.TryGetValue(territoryCode, out var territory)) continue;
 
             var seed = GeometryFactory.CreatePoint(new Coordinate(city.Lon, city.Lat));
