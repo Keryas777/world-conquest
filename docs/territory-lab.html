@@ -192,6 +192,28 @@ function viewName(){return currentLod==="110"?"Monde":currentLod==="50"?"Contine
 function countryFill(){
  return getComputedStyle(document.body).getPropertyValue("--neutral").trim()||"#bfc2c3";
 }
+function isWesternSaharaFeature(feature){
+ const p=feature.properties||{};
+ return [p.ADMIN,p.NAME,p.NAME_LONG,p.NAME_SORT,p.BRK_NAME].some(name=>
+   typeof name==="string"&&(/^(Western Sahara|W\. Sahara)$/i).test(name)
+ )||[p.ADM0_A3,p.SOV_A3,p.GU_A3].some(code=>code==="SAH");
+}
+function westernSaharaExterior(features){
+ const segments=new Map();
+ const addRing=ring=>{
+  for(let i=1;i<ring.length;i++){
+   const a=ring[i-1],b=ring[i];
+   const ak=a.join(","),bk=b.join(","),key=ak<bk?ak+"|"+bk:bk+"|"+ak;
+   const entry=segments.get(key);if(entry)entry.count++;else segments.set(key,{count:1,line:[a,b]});
+  }
+ };
+ const addGeometry=geometry=>{
+  if(geometry.type==="Polygon")geometry.coordinates.forEach(addRing);
+  else if(geometry.type==="MultiPolygon")geometry.coordinates.forEach(polygon=>polygon.forEach(addRing));
+ };
+ features.forEach(feature=>addGeometry(feature.geometry));
+ return {type:"MultiLineString",coordinates:[...segments.values()].filter(x=>x.count===1).map(x=>x.line)};
+}
 function updateStatus(){
  const t=territoryData?" · "+territoryData.cells.length+" cellules":"";
  document.querySelector("#status").textContent=viewName()+" · "+currentLod+"m · "+({"state":"State-like","pastel":"Pastel","dark":"Dark"})[currentStyle]+" · Zoom ×"+currentTransform.k.toFixed(2)+t;
@@ -231,7 +253,11 @@ async function prepareLod(lod,foreground=false){
    // Frontières indépendantes des aplats : elles ne participent pas au crossfade.
    let borders=borderLayers[lod];
    if(!borders)borders=borderLayers[lod]=borderRoot.append("g").attr("class","border-layer border-"+lod);
-   borders.selectAll("path").data(features,d=>d.id||d.properties?.ADM0_A3||d.properties?.ISO_A3).join("path").attr("d",path);
+   const westernSaharaFeatures=features.filter(isWesternSaharaFeature);
+   const borderFeatures=features.filter(feature=>!isWesternSaharaFeature(feature));
+   if(westernSaharaFeatures.length)
+     borderFeatures.push({id:"WC_EH_EXTERIOR",geometry:westernSaharaExterior(westernSaharaFeatures)});
+   borders.selectAll("path").data(borderFeatures,d=>d.id||d.properties?.ADM0_A3||d.properties?.ISO_A3).join("path").attr("d",path);
    prepared.add(lod);
  }catch(e){console.error(e);document.querySelector("#status").textContent="Erreur LOD "+lod+"m";}
  if(foreground)setLoading(false);
