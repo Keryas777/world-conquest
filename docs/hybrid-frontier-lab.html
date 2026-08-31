@@ -3,112 +3,67 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <title>World Conquest — Hybrid Frontier Lab</title>
+  <title>World Conquest — Hybrid Frontier Lab C2</title>
   <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
   <style>
     html,body{margin:0;height:100%;background:#0b1020;color:#eef3ff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow:hidden}
     #map{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
     .panel{position:absolute;z-index:10;top:max(10px,env(safe-area-inset-top));left:10px;right:10px;max-width:720px;margin:auto;background:rgba(10,16,31,.94);border:1px solid #34415f;border-radius:14px;padding:10px 12px;box-shadow:0 10px 28px #0008;backdrop-filter:blur(8px)}
-    .title{font-weight:700;font-size:15px;margin-bottom:5px}.sub{font-size:11px;color:#b9c4dc;line-height:1.35}
-    .controls{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px;align-items:center}
-    button{border:1px solid #41516f;background:#18233a;color:#eef3ff;border-radius:10px;padding:7px 9px;font-weight:650;font-size:12px}
-    button.active{background:#dbeafe;color:#111827;border-color:#dbeafe}
-    label{font-size:11px;color:#d7deed;display:flex;align-items:center;gap:5px;background:#131d31;border-radius:9px;padding:6px 8px}
-    .status{margin-top:7px;font-size:11px;color:#9fb0cf}
-    .country{stroke:#0b1020;stroke-width:1.4;vector-effect:non-scaling-stroke;stroke-linejoin:round}
-    .debug-old{fill:none;stroke:#ff5d73;stroke-width:1.1;stroke-dasharray:5 4;vector-effect:non-scaling-stroke;pointer-events:none}
-    .corridor{fill:#ffcf5a;fill-opacity:.20;stroke:#ffcf5a;stroke-opacity:.55;stroke-width:.7;vector-effect:non-scaling-stroke;pointer-events:none}
-    .city{fill:#fff;stroke:#071022;stroke-width:.7;vector-effect:non-scaling-stroke;pointer-events:none}
-    .legend{position:absolute;z-index:9;left:10px;bottom:max(12px,env(safe-area-inset-bottom));background:rgba(10,16,31,.90);border:1px solid #34415f;border-radius:12px;padding:8px 10px;font-size:10px;color:#c8d3e9;max-width:min(420px,calc(100% - 40px))}
-    .error{color:#ff9ca9;font-weight:650}
+    .title{font-weight:700;font-size:15px;margin-bottom:5px}.sub{font-size:11px;color:#b9c4dc;line-height:1.35}.controls{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px;align-items:center}
+    button{border:1px solid #41516f;background:#18233a;color:#eef3ff;border-radius:10px;padding:7px 9px;font-weight:650;font-size:12px}button.active{background:#dbeafe;color:#111827;border-color:#dbeafe}
+    label{font-size:11px;color:#d7deed;display:flex;align-items:center;gap:5px;background:#131d31;border-radius:9px;padding:6px 8px}.status{margin-top:7px;font-size:11px;color:#9fb0cf;line-height:1.35}
+    .country{stroke:#0b1020;stroke-width:1.4;vector-effect:non-scaling-stroke;stroke-linejoin:round}.debug-old{fill:none;stroke:#ff5d73;stroke-width:1.1;stroke-dasharray:5 4;vector-effect:non-scaling-stroke;pointer-events:none}
+    .corridor{fill:#ffcf5a;fill-opacity:.20;stroke:#ffcf5a;stroke-opacity:.55;stroke-width:.7;vector-effect:non-scaling-stroke;pointer-events:none}.city{fill:#fff;stroke:#071022;stroke-width:.7;vector-effect:non-scaling-stroke;pointer-events:none}
+    .legend{position:absolute;z-index:9;left:10px;bottom:max(12px,env(safe-area-inset-bottom));background:rgba(10,16,31,.90);border:1px solid #34415f;border-radius:12px;padding:8px 10px;font-size:10px;color:#c8d3e9;max-width:min(500px,calc(100% - 40px))}.ok{color:#8ee6a8}.warn{color:#ffbf75}.error{color:#ff9ca9;font-weight:650}
   </style>
 </head>
 <body>
-<svg id="map" aria-label="Carte expérimentale des frontières cellulaires"></svg>
+<svg id="map"></svg>
 <div class="panel">
-  <div class="title">🧪 Frontières politiques cellulaires — labo hybride</div>
-  <div class="sub">A = frontières actuelles. C = Voronoï global uniquement dans un couloir terrestre autour des frontières actuelles. Les côtes sont protégées par une bande de garde.</div>
+  <div class="title">🧪 Frontières politiques cellulaires — C2 adaptatif</div>
+  <div class="sub">Le couloir varie selon la taille du plus petit territoire adjacent. Si un territoire est trop déformé, ses frontières sont automatiquement resserrées. Les côtes restent protégées.</div>
   <div class="controls">
     <button data-mode="current" class="active">A · actuel</button>
-    <button data-mode="hybrid10">C · 10 km</button>
-    <button data-mode="hybrid25">C · 25 km</button>
-    <button data-mode="hybrid50">C · 50 km</button>
+    <button data-mode="adaptive">C2 · adaptatif</button>
     <label><input id="oldBorders" type="checkbox"> anciennes frontières</label>
     <label><input id="showCorridor" type="checkbox"> couloir</label>
-    <label><input id="showCities" type="checkbox" checked> villes</label>
+    <label><input id="showCities" type="checkbox"> villes</label>
   </div>
   <div id="status" class="status">Chargement…</div>
 </div>
-<div class="legend">Zone test : FR · BE · LU · DE · CH · IT · ES. Expérience visuelle uniquement : aucune règle de jeu n’est validée par ce labo.</div>
+<div class="legend">Zone test : FR · BE · LU · DE · CH · IT · ES. Statut EXPÉRIMENTAL. C2 vise le style de C-25 sans laisser les micro-territoires se déformer démesurément.</div>
 <script>
 (async()=>{
-  const svg=d3.select('#map');
-  const width=()=>window.innerWidth, height=()=>window.innerHeight;
-  const root=svg.append('g');
-  const countryLayer=root.append('g');
-  const corridorLayer=root.append('g');
-  const debugLayer=root.append('g');
-  const cityLayer=root.append('g');
-  const status=document.querySelector('#status');
-  let data,projection,path,currentMode='current';
-  const palette={FR:'#4f83e1',BE:'#e7a63a',LU:'#d65062',DE:'#8267d8',CH:'#e85d68',IT:'#58a96d',ES:'#d4b84b'};
-
-  function feature(ownerRegion){return {type:'Feature',properties:{ownerCode:ownerRegion.ownerCode},geometry:ownerRegion.geometry};}
-  function collection(regions){return {type:'FeatureCollection',features:regions.filter(x=>x.geometry).map(feature)};}
-  function variant(){return currentMode==='current'?data.current:data.variants[currentMode];}
-
-  function fit(){
-    const fc=collection(data.current.ownerRegions);
-    projection=d3.geoMercator().fitExtent([[20,110],[width()-20,height()-30]],fc);
-    path=d3.geoPath(projection);
-  }
-
-  function draw(){
-    const v=variant();
-    const regions=v.ownerRegions.filter(x=>x.geometry);
-    countryLayer.selectAll('path').data(regions,d=>d.ownerCode).join('path')
-      .attr('class','country').attr('fill',d=>palette[d.ownerCode]||'#718096').attr('d',d=>path(feature(d)));
-
-    const debug=document.querySelector('#oldBorders').checked && currentMode!=='current';
-    debugLayer.selectAll('path').data(debug?data.current.ownerRegions.filter(x=>x.geometry):[],d=>d.ownerCode).join('path')
-      .attr('class','debug-old').attr('d',d=>path(feature(d)));
-
-    const showCorridor=document.querySelector('#showCorridor').checked && currentMode!=='current' && v.corridor;
-    corridorLayer.selectAll('path').data(showCorridor?[{type:'Feature',geometry:v.corridor}]:[]).join('path')
-      .attr('class','corridor').attr('d',path);
-
-    const showCities=document.querySelector('#showCities').checked;
-    cityLayer.selectAll('circle').data(showCities?data.cities:[],d=>d.id).join('circle')
-      .attr('class','city').attr('r',1.7)
-      .attr('cx',d=>projection([d.lon,d.lat])[0]).attr('cy',d=>projection([d.lon,d.lat])[1]);
-
-    document.querySelectorAll('button[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===currentMode));
-    if(currentMode==='current') status.textContent=`A actuel · ${data.cellCount} cellules · frontières initiales inchangées`;
-    else {
-      const km=v.corridorKm;
-      const change=v.changedAreaRatioByOwner||{};
-      const max=Object.entries(change).sort((a,b)=>b[1]-a[1])[0];
-      status.textContent=`C hybride ${km} km · garde-côte ${v.coastalGuardKm} km · plus forte surface modifiée : ${max?max[0]+' '+(max[1]*100).toFixed(2)+' %':'n/a'}`;
-    }
-  }
-
-  function resize(){svg.attr('viewBox',`0 0 ${width()} ${height()}`);fit();draw();}
-
-  try{
-    const response=await fetch('./hybrid-frontier-lab.json',{cache:'no-store'});
-    if(!response.ok) throw new Error(`HTTP ${response.status}`);
-    data=await response.json();
-    fit();draw();
-
-    document.querySelectorAll('button[data-mode]').forEach(button=>button.addEventListener('click',()=>{currentMode=button.dataset.mode;draw();}));
-    ['oldBorders','showCorridor','showCities'].forEach(id=>document.querySelector('#'+id).addEventListener('change',draw));
-
-    const zoom=d3.zoom().scaleExtent([1,40]).on('zoom',event=>root.attr('transform',event.transform));
-    svg.call(zoom);
-    window.addEventListener('resize',resize);
-  }catch(error){
-    status.innerHTML=`<span class="error">Impossible de charger hybrid-frontier-lab.json : ${error.message}</span>`;
-  }
+ const svg=d3.select('#map'),root=svg.append('g'),countryLayer=root.append('g'),corridorLayer=root.append('g'),debugLayer=root.append('g'),cityLayer=root.append('g');
+ const status=document.querySelector('#status'); let data,projection,path,currentMode='current';
+ const palette={FR:'#4f83e1',BE:'#e7a63a',LU:'#d65062',DE:'#8267d8',CH:'#e85d68',IT:'#58a96d',ES:'#d4b84b'};
+ const width=()=>window.innerWidth,height=()=>window.innerHeight;
+ function feature(r){return {type:'Feature',properties:{ownerCode:r.ownerCode},geometry:r.geometry};}
+ function collection(r){return {type:'FeatureCollection',features:r.filter(x=>x.geometry).map(feature)};}
+ function variant(){return currentMode==='current'?data.current:data.variants[currentMode];}
+ function fit(){projection=d3.geoMercator().fitExtent([[20,110],[width()-20,height()-30]],collection(data.current.ownerRegions));path=d3.geoPath(projection);}
+ function draw(){
+   const v=variant(),regions=v.ownerRegions.filter(x=>x.geometry);
+   countryLayer.selectAll('path').data(regions,d=>d.ownerCode).join('path').attr('class','country').attr('fill',d=>palette[d.ownerCode]||'#718096').attr('d',d=>path(feature(d)));
+   const debug=document.querySelector('#oldBorders').checked&&currentMode!=='current';
+   debugLayer.selectAll('path').data(debug?data.current.ownerRegions.filter(x=>x.geometry):[],d=>d.ownerCode).join('path').attr('class','debug-old').attr('d',d=>path(feature(d)));
+   const corridor=document.querySelector('#showCorridor').checked&&currentMode!=='current'&&v.corridor;
+   corridorLayer.selectAll('path').data(corridor?[{type:'Feature',geometry:v.corridor}]:[]).join('path').attr('class','corridor').attr('d',path);
+   const cities=document.querySelector('#showCities').checked?data.cities:[];
+   cityLayer.selectAll('circle').data(cities,d=>d.id).join('circle').attr('class','city').attr('r',1.7).attr('cx',d=>projection([d.lon,d.lat])[0]).attr('cy',d=>projection([d.lon,d.lat])[1]);
+   document.querySelectorAll('button[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===currentMode));
+   if(currentMode==='current'){status.textContent=`A actuel · ${data.cellCount} cellules · frontières initiales inchangées`;return;}
+   const changes=v.changedAreaRatioByOwner||{},max=Object.entries(changes).sort((a,b)=>b[1]-a[1])[0];
+   const guard=v.guardrailSatisfied?'<span class="ok">garde-fou OK</span>':'<span class="warn">garde-fou non satisfait</span>';
+   status.innerHTML=`C2 adaptatif · couloirs ${v.minAppliedCorridorKm.toFixed(1)}–${v.maxAppliedCorridorKm.toFixed(1)} km · garde-côte ${v.coastalGuardKm} km · ${guard}<br>Déformation max : ${max?max[0]+' '+(max[1]*100).toFixed(2)+' %':'n/a'} · plafond ${(v.maxChangedAreaRatio*100).toFixed(0)} % · ${v.guardrailIterations} itération(s)`;
+ }
+ function resize(){svg.attr('viewBox',`0 0 ${width()} ${height()}`);fit();draw();}
+ try{
+   const response=await fetch('./hybrid-frontier-lab.json',{cache:'no-store'});if(!response.ok)throw new Error(`HTTP ${response.status}`);data=await response.json();fit();draw();
+   document.querySelectorAll('button[data-mode]').forEach(b=>b.addEventListener('click',()=>{currentMode=b.dataset.mode;draw();}));
+   ['oldBorders','showCorridor','showCities'].forEach(id=>document.querySelector('#'+id).addEventListener('change',draw));
+   svg.call(d3.zoom().scaleExtent([1,40]).on('zoom',event=>root.attr('transform',event.transform)));window.addEventListener('resize',resize);
+ }catch(error){status.innerHTML=`<span class="error">Impossible de charger le labo : ${error.message}</span>`;}
 })();
 </script>
 </body>
