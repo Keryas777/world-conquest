@@ -87,6 +87,7 @@ static class Program
         var worldSelection = await WorldSelectionLab.GenerateAsync(http, outDir);
         await FrontierGraphLab.GenerateAsync(http, outDir, candidates, .60);
         await VoronoiLab.GenerateWorldAsync(http, outDir, worldSelection, .60);
+        await HybridFrontierLab.GenerateAsync(outDir);
         Console.WriteLine($"Outputs written to {outDir}");
     }
 }
