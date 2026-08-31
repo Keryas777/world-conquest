@@ -67,7 +67,6 @@ static class Program
 {
     public static async Task Main()
     {
-        // Recalibrated gameplay density test: France 85, Belgium 18, Luxembourg 3.
         var configs = new[] { new CountryConfig("FR", "France", 85), new CountryConfig("BE", "Belgium", 18), new CountryConfig("LU", "Luxembourg", 3) }; var weights = new[] { .30, .50, .60, .70, 1.00 }; const long minPopulation = 500;
         var cacheDir = Path.Combine("data", "raw", "geonames"); var outDir = Path.Combine("data", "generated", "city-selection"); Directory.CreateDirectory(cacheDir); Directory.CreateDirectory(outDir);
         using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) }; http.DefaultRequestHeaders.UserAgent.ParseAdd("world-conquest-city-selection-lab/0.1"); var candidates = new Dictionary<string, List<City>>();
@@ -75,19 +74,20 @@ static class Program
         {
             var zipPath = Path.Combine(cacheDir, cfg.Code + ".zip"); if (!File.Exists(zipPath)) { var url = $"https://download.geonames.org/export/dump/{cfg.Code}.zip"; Console.WriteLine($"Downloading {url}"); await using var input = await http.GetStreamAsync(url); await using var output = File.Create(zipPath); await input.CopyToAsync(output); }
             using var archive = ZipFile.OpenRead(zipPath); var entry = archive.GetEntry(cfg.Code + ".txt") ?? throw new InvalidOperationException($"Missing {cfg.Code}.txt"); using var reader = new StreamReader(entry.Open()); var cities = new List<City>();
-            while (await reader.ReadLineAsync() is { } line) { var f = line.Split('\t'); if (f.Length < 15 || f[6] != "P") continue; if (!long.TryParse(f[14], NumberStyles.Integer, CultureInfo.InvariantCulture, out var pop) || pop < minPopulation) continue; if (!long.TryParse(f[0], out var id)) continue; if (!double.TryParse(f[4], NumberStyles.Float, CultureInfo.InvariantCulture, out var lat)) continue; if (!double.TryParse(f[5], NumberStyles.Float, CultureInfo.InvariantCulture, out var lon)) continue; cities.Add(new City(id, f[1], cfg.Code, lat, lon, pop)); }
-            candidates[cfg.Code] = cities; Console.WriteLine($"{cfg.Name}: {cities.Count:N0} candidates >= {minPopulation:N0}");
+            while (await reader.ReadLineAsync() is { } line) { var f=line.Split('\t'); if(f.Length<15||f[6]!="P")continue; if(!long.TryParse(f[14],NumberStyles.Integer,CultureInfo.InvariantCulture,out var pop)||pop<minPopulation)continue; if(!long.TryParse(f[0],out var id))continue; if(!double.TryParse(f[4],NumberStyles.Float,CultureInfo.InvariantCulture,out var lat))continue; if(!double.TryParse(f[5],NumberStyles.Float,CultureInfo.InvariantCulture,out var lon))continue; cities.Add(new City(id,f[1],cfg.Code,lat,lon,pop)); }
+            candidates[cfg.Code]=cities; Console.WriteLine($"{cfg.Name}: {cities.Count:N0} candidates >= {minPopulation:N0}");
         }
-        using var report = new StreamWriter(Path.Combine(outDir, "report.md")); report.WriteLine("# City-selection laboratory\n"); report.WriteLine($"GeoNames populated places (`feature class P`), minimum population {minPopulation:N0}.\n"); report.WriteLine("| Population weight | Country | Selected | Mean nearest-neighbor km | Min km | Max km |\n|---:|---|---:|---:|---:|---:|");
-        var snapshots = new Dictionary<int, IReadOnlyDictionary<string, List<City>>>();
-        foreach (var weight in weights) { var groups = new Dictionary<string, List<City>>(); foreach (var cfg in configs) { var selected = Selector.Select(candidates[cfg.Code], cfg.Quota, weight); groups[cfg.Code] = selected; var s = Results.NearestStats(selected); report.WriteLine($"| {weight:P0} | {cfg.Name} | {selected.Count} | {s.Mean:F1} | {s.Min:F1} | {s.Max:F1} |"); } var weightPercent = (int)Math.Round(weight * 100); var label = weightPercent.ToString("D3"); snapshots[weightPercent] = groups; Results.WriteCsv(Path.Combine(outDir, $"selected-pop-{label}.csv"), groups.Values.SelectMany(x => x)); Results.WriteSvg(Path.Combine(outDir, $"selected-pop-{label}.svg"), groups, weight); }
-        Viewer.WriteHtml(Path.Combine(outDir, "viewer.html"), snapshots, configs);
-        await QuotaLab.GenerateAsync(http, outDir);
-        await PopulationThresholdLab.GenerateAsync(http, outDir);
-        var worldSelection = await WorldSelectionLab.GenerateAsync(http, outDir);
-        await FrontierGraphLab.GenerateAsync(http, outDir, candidates, .60);
-        await VoronoiLab.GenerateWorldAsync(http, outDir, worldSelection, .60);
+        using var report = new StreamWriter(Path.Combine(outDir,"report.md")); report.WriteLine("# City-selection laboratory\n"); report.WriteLine($"GeoNames populated places (`feature class P`), minimum population {minPopulation:N0}.\n"); report.WriteLine("| Population weight | Country | Selected | Mean nearest-neighbor km | Min km | Max km |\n|---:|---|---:|---:|---:|---:|");
+        var snapshots = new Dictionary<int,IReadOnlyDictionary<string,List<City>>>();
+        foreach(var weight in weights){var groups=new Dictionary<string,List<City>>();foreach(var cfg in configs){var selected=Selector.Select(candidates[cfg.Code],cfg.Quota,weight);groups[cfg.Code]=selected;var s=Results.NearestStats(selected);report.WriteLine($"| {weight:P0} | {cfg.Name} | {selected.Count} | {s.Mean:F1} | {s.Min:F1} | {s.Max:F1} |");}var weightPercent=(int)Math.Round(weight*100);var label=weightPercent.ToString("D3");snapshots[weightPercent]=groups;Results.WriteCsv(Path.Combine(outDir,$"selected-pop-{label}.csv"),groups.Values.SelectMany(x=>x));Results.WriteSvg(Path.Combine(outDir,$"selected-pop-{label}.svg"),groups,weight);}
+        Viewer.WriteHtml(Path.Combine(outDir,"viewer.html"),snapshots,configs);
+        await QuotaLab.GenerateAsync(http,outDir);
+        await PopulationThresholdLab.GenerateAsync(http,outDir);
+        var worldSelection=await WorldSelectionLab.GenerateAsync(http,outDir);
+        await FrontierGraphLab.GenerateAsync(http,outDir,candidates,.60);
+        await VoronoiLab.GenerateWorldAsync(http,outDir,worldSelection,.60);
         await HybridFrontierLab.GenerateAsync(outDir);
+        await AdaptiveHybridFrontierLab.GenerateAsync(outDir);
         Console.WriteLine($"Outputs written to {outDir}");
     }
 }
