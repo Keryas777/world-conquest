@@ -123,7 +123,7 @@ static class AdaptiveHybridFrontierLab
         double widthMultiplier)
     {
         var ownerScale = baselineOwners.Keys.ToDictionary(x => x, _ => 1.0, StringComparer.OrdinalIgnoreCase);
-        Dictionary<string, Geometry> finalOwners = baselineOwners;
+        IReadOnlyDictionary<string, Geometry> finalOwners = baselineOwners;
         Dictionary<string, double> finalChanges = baselineOwners.Keys.ToDictionary(x => x, _ => 0.0, StringComparer.OrdinalIgnoreCase);
         Geometry finalCorridor = GeometryFactory.CreatePolygon();
         Dictionary<string, double> finalWidths = new(StringComparer.OrdinalIgnoreCase);
@@ -178,7 +178,7 @@ static class AdaptiveHybridFrontierLab
 
         return new AdaptiveRun(
             finalCorridor,
-            finalOwners,
+            finalOwners.ToDictionary(x => x.Key, x => x.Value, StringComparer.OrdinalIgnoreCase),
             finalChanges,
             ownerScale,
             finalWidths,
