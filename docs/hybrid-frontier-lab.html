@@ -8,30 +8,34 @@
   <style>
     html,body{margin:0;height:100%;background:#0b1020;color:#eef3ff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow:hidden}
     #map{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
-    .panel{position:absolute;z-index:10;top:max(10px,env(safe-area-inset-top));left:10px;right:10px;max-width:720px;margin:auto;background:rgba(10,16,31,.94);border:1px solid #34415f;border-radius:14px;padding:10px 12px;box-shadow:0 10px 28px #0008;backdrop-filter:blur(8px)}
+    .panel{position:absolute;z-index:10;top:max(10px,env(safe-area-inset-top));left:10px;right:10px;max-width:780px;margin:auto;background:rgba(10,16,31,.94);border:1px solid #34415f;border-radius:14px;padding:10px 12px;box-shadow:0 10px 28px #0008;backdrop-filter:blur(8px)}
     .title{font-weight:700;font-size:15px;margin-bottom:5px}.sub{font-size:11px;color:#b9c4dc;line-height:1.35}.controls{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px;align-items:center}
     button{border:1px solid #41516f;background:#18233a;color:#eef3ff;border-radius:10px;padding:7px 9px;font-weight:650;font-size:12px}button.active{background:#dbeafe;color:#111827;border-color:#dbeafe}
-    label{font-size:11px;color:#d7deed;display:flex;align-items:center;gap:5px;background:#131d31;border-radius:9px;padding:6px 8px}.status{margin-top:7px;font-size:11px;color:#9fb0cf;line-height:1.35}
+    label{font-size:11px;color:#d7deed;display:flex;align-items:center;gap:5px;background:#131d31;border-radius:9px;padding:6px 8px}.status{margin-top:7px;font-size:11px;color:#9fb0cf;line-height:1.4}
     .country{stroke:#0b1020;stroke-width:1.4;vector-effect:non-scaling-stroke;stroke-linejoin:round}.debug-old{fill:none;stroke:#ff5d73;stroke-width:1.1;stroke-dasharray:5 4;vector-effect:non-scaling-stroke;pointer-events:none}
     .corridor{fill:#ffcf5a;fill-opacity:.20;stroke:#ffcf5a;stroke-opacity:.55;stroke-width:.7;vector-effect:non-scaling-stroke;pointer-events:none}.city{fill:#fff;stroke:#071022;stroke-width:.7;vector-effect:non-scaling-stroke;pointer-events:none}
-    .legend{position:absolute;z-index:9;left:10px;bottom:max(12px,env(safe-area-inset-bottom));background:rgba(10,16,31,.90);border:1px solid #34415f;border-radius:12px;padding:8px 10px;font-size:10px;color:#c8d3e9;max-width:min(500px,calc(100% - 40px))}.ok{color:#8ee6a8}.warn{color:#ffbf75}.error{color:#ff9ca9;font-weight:650}
+    .legend{position:absolute;z-index:9;left:10px;bottom:max(12px,env(safe-area-inset-bottom));background:rgba(10,16,31,.90);border:1px solid #34415f;border-radius:12px;padding:8px 10px;font-size:10px;color:#c8d3e9;max-width:min(560px,calc(100% - 40px))}.ok{color:#8ee6a8}.warn{color:#ffbf75}.error{color:#ff9ca9;font-weight:650}
   </style>
 </head>
 <body>
 <svg id="map"></svg>
 <div class="panel">
-  <div class="title">🧪 Frontières politiques cellulaires — C2 adaptatif</div>
-  <div class="sub">Le couloir varie selon la taille du plus petit territoire adjacent. Si un territoire est trop déformé, ses frontières sont automatiquement resserrées. Les côtes restent protégées.</div>
+  <div class="title">🧪 Frontières politiques cellulaires — balayage C2</div>
+  <div class="sub">Le plafond de déformation reste fixé à 35 %. On augmente seulement la largeur demandée par C2 pour voir jusqu’où le système peut devenir plus agressif avant que le garde-fou ne le contraigne.</div>
   <div class="controls">
     <button data-mode="current" class="active">A · actuel</button>
-    <button data-mode="adaptive">C2 · adaptatif</button>
+    <button data-mode="adaptive">C2 · ×1</button>
+    <button data-mode="adaptive125">×1,25</button>
+    <button data-mode="adaptive150">×1,5</button>
+    <button data-mode="adaptive175">×1,75</button>
+    <button data-mode="adaptive200">×2</button>
     <label><input id="oldBorders" type="checkbox"> anciennes frontières</label>
     <label><input id="showCorridor" type="checkbox"> couloir</label>
     <label><input id="showCities" type="checkbox"> villes</label>
   </div>
   <div id="status" class="status">Chargement…</div>
 </div>
-<div class="legend">Zone test : FR · BE · LU · DE · CH · IT · ES. Statut EXPÉRIMENTAL. C2 vise le style de C-25 sans laisser les micro-territoires se déformer démesurément.</div>
+<div class="legend">Zone test : FR · BE · LU · DE · CH · IT · ES. Statut EXPÉRIMENTAL. Les profils ×1 à ×2 utilisent tous le même garde-fou de 35 %.</div>
 <script>
 (async()=>{
  const svg=d3.select('#map'),root=svg.append('g'),countryLayer=root.append('g'),corridorLayer=root.append('g'),debugLayer=root.append('g'),cityLayer=root.append('g');
@@ -41,9 +45,11 @@
  function feature(r){return {type:'Feature',properties:{ownerCode:r.ownerCode},geometry:r.geometry};}
  function collection(r){return {type:'FeatureCollection',features:r.filter(x=>x.geometry).map(feature)};}
  function variant(){return currentMode==='current'?data.current:data.variants[currentMode];}
- function fit(){projection=d3.geoMercator().fitExtent([[20,110],[width()-20,height()-30]],collection(data.current.ownerRegions));path=d3.geoPath(projection);}
+ function fit(){projection=d3.geoMercator().fitExtent([[20,120],[width()-20,height()-30]],collection(data.current.ownerRegions));path=d3.geoPath(projection);}
  function draw(){
-   const v=variant(),regions=v.ownerRegions.filter(x=>x.geometry);
+   const v=variant();
+   if(!v){status.innerHTML='<span class="error">Profil absent du JSON généré. Relancer la génération du labo.</span>';return;}
+   const regions=v.ownerRegions.filter(x=>x.geometry);
    countryLayer.selectAll('path').data(regions,d=>d.ownerCode).join('path').attr('class','country').attr('fill',d=>palette[d.ownerCode]||'#718096').attr('d',d=>path(feature(d)));
    const debug=document.querySelector('#oldBorders').checked&&currentMode!=='current';
    debugLayer.selectAll('path').data(debug?data.current.ownerRegions.filter(x=>x.geometry):[],d=>d.ownerCode).join('path').attr('class','debug-old').attr('d',d=>path(feature(d)));
@@ -55,7 +61,13 @@
    if(currentMode==='current'){status.textContent=`A actuel · ${data.cellCount} cellules · frontières initiales inchangées`;return;}
    const changes=v.changedAreaRatioByOwner||{},max=Object.entries(changes).sort((a,b)=>b[1]-a[1])[0];
    const guard=v.guardrailSatisfied?'<span class="ok">garde-fou OK</span>':'<span class="warn">garde-fou non satisfait</span>';
-   status.innerHTML=`C2 adaptatif · couloirs ${v.minAppliedCorridorKm.toFixed(1)}–${v.maxAppliedCorridorKm.toFixed(1)} km · garde-côte ${v.coastalGuardKm} km · ${guard}<br>Déformation max : ${max?max[0]+' '+(max[1]*100).toFixed(2)+' %':'n/a'} · plafond ${(v.maxChangedAreaRatio*100).toFixed(0)} % · ${v.guardrailIterations} itération(s)`;
+   const meanChange=((v.meanObservedChangedAreaRatio??0)*100).toFixed(2);
+   const meanWidth=(v.meanAppliedCorridorKm??0).toFixed(1);
+   const constrained=v.constrainedOwnerCount??0,near=v.nearGuardrailOwnerCount??0;
+   status.innerHTML=`${v.label||'C2'} · largeur demandée ×${(v.widthMultiplier??1).toFixed(2)} · ${guard}<br>`+
+     `Couloirs finaux : ${v.minAppliedCorridorKm.toFixed(1)}–${v.maxAppliedCorridorKm.toFixed(1)} km · moyenne ${meanWidth} km · garde-côte ${v.coastalGuardKm} km<br>`+
+     `Déformation : max ${max?max[0]+' '+(max[1]*100).toFixed(2)+' %':'n/a'} · moyenne ${meanChange} % · plafond ${(v.maxChangedAreaRatio*100).toFixed(0)} %<br>`+
+     `${v.guardrailIterations} itération(s) · ${constrained} propriétaire(s) resserré(s) · ${near} proche(s) du plafond`;
  }
  function resize(){svg.attr('viewBox',`0 0 ${width()} ${height()}`);fit();draw();}
  try{
