@@ -1,5 +1,7 @@
 using System.Text.Json;
 using NetTopologySuite.Geometries;
+using NetTopologySuite.Operation.Overlay;
+using NetTopologySuite.Operation.OverlayNG;
 using NetTopologySuite.Operation.Union;
 using NetTopologySuite.Triangulate;
 
@@ -7,12 +9,30 @@ static class AdaptiveHybridFrontierLab
 {
     sealed record Cell(long Id, string TerritoryCode, string OwnerCode, double Lat, double Lon, Geometry Geometry);
     sealed record Edge(long A, long B, bool Foreign);
+    sealed record AdaptiveProfile(string Key, string Label, double WidthMultiplier);
+    sealed record AdaptiveRun(
+        Geometry Corridor,
+        Dictionary<string, Geometry> OwnerRegions,
+        Dictionary<string, double> ChangedAreaRatioByOwner,
+        Dictionary<string, double> OwnerScaleFactors,
+        Dictionary<string, double> AppliedWidthsKmByOwnerPair,
+        int Iterations,
+        bool GuardrailSatisfied);
 
     static readonly GeometryFactory GeometryFactory =
         NetTopologySuite.NtsGeometryServices.Instance.CreateGeometryFactory(srid: 4326);
 
     static readonly HashSet<string> TargetTerritories =
         new(StringComparer.OrdinalIgnoreCase) { "FR", "BE", "LU", "DE", "CH", "IT", "ES" };
+
+    static readonly AdaptiveProfile[] Profiles =
+    {
+        new("adaptive", "C2 x1.00", 1.00),
+        new("adaptive125", "C2 x1.25", 1.25),
+        new("adaptive150", "C2 x1.50", 1.50),
+        new("adaptive175", "C2 x1.75", 1.75),
+        new("adaptive200", "C2 x2.00", 2.00)
+    };
 
     const double CoastalGuardKm = 3.0;
     const double MaxChangedAreaRatio = 0.35;
@@ -38,9 +58,74 @@ static class AdaptiveHybridFrontierLab
         var baselineByCell = targetCells.ToDictionary(c => c.Id, c => c.Geometry);
         var baselineOwners = BuildOwnerRegions(targetCells, baselineByCell);
 
+        var variants = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+        foreach (var profile in Profiles)
+        {
+            var run = RunAdaptiveVariant(
+                targetCells,
+                targetEdges,
+                byId,
+                baselineOwners,
+                globalVoronoi,
+                regionalLand,
+                profile.WidthMultiplier);
+
+            var widthValues = run.AppliedWidthsKmByOwnerPair.Values.ToArray();
+            var changeValues = run.ChangedAreaRatioByOwner.Values.ToArray();
+            variants[profile.Key] = new
+            {
+                label = profile.Label,
+                widthMultiplier = profile.WidthMultiplier,
+                coastalGuardKm = CoastalGuardKm,
+                maxChangedAreaRatio = MaxChangedAreaRatio,
+                guardrailSatisfied = run.GuardrailSatisfied,
+                guardrailIterations = run.Iterations,
+                minAppliedCorridorKm = widthValues.Length == 0 ? 0 : widthValues.Min(),
+                meanAppliedCorridorKm = widthValues.Length == 0 ? 0 : widthValues.Average(),
+                maxAppliedCorridorKm = widthValues.Length == 0 ? 0 : widthValues.Max(),
+                maxObservedChangedAreaRatio = changeValues.Length == 0 ? 0 : changeValues.Max(),
+                meanObservedChangedAreaRatio = changeValues.Length == 0 ? 0 : changeValues.Average(),
+                constrainedOwnerCount = run.OwnerScaleFactors.Count(x => x.Value < 0.999999),
+                nearGuardrailOwnerCount = run.ChangedAreaRatioByOwner.Count(x => x.Value >= MaxChangedAreaRatio * 0.85),
+                corridor = GeometryToGeoJson(run.Corridor),
+                ownerRegions = OwnerRegionPayload(run.OwnerRegions),
+                changedAreaRatioByOwner = run.ChangedAreaRatioByOwner,
+                ownerScaleFactors = run.OwnerScaleFactors,
+                appliedWidthsKmByOwnerPair = run.AppliedWidthsKmByOwnerPair
+            };
+
+            Console.WriteLine(
+                $"Adaptive hybrid {profile.Label}: guardrail={(run.GuardrailSatisfied ? "ok" : "not-satisfied")}, " +
+                $"iterations={run.Iterations}, max-change={(changeValues.Length == 0 ? 0 : changeValues.Max()):P1}, " +
+                $"mean-width={(widthValues.Length == 0 ? 0 : widthValues.Average()):F1} km.");
+        }
+
+        var payload = new
+        {
+            status = "experimental",
+            description = "C2 adaptive hybrid political-frontier lab. The fixed 35% deformation guardrail is preserved while requested corridor aggressiveness is swept from x1.00 to x2.00.",
+            targetTerritories = TargetTerritories.OrderBy(x => x).ToArray(),
+            cellCount = targetCells.Length,
+            foreignAdjacencyCount = targetEdges.Length,
+            current = new { ownerRegions = OwnerRegionPayload(baselineOwners) },
+            variants,
+            cities = targetCells.Select(c => new { id = c.Id, territoryCode = c.TerritoryCode, ownerCode = c.OwnerCode, lat = c.Lat, lon = c.Lon }).ToArray()
+        };
+
+        await File.WriteAllTextAsync(Path.Combine(outDir, "hybrid-frontier-lab.json"), JsonSerializer.Serialize(payload));
+    }
+
+    static AdaptiveRun RunAdaptiveVariant(
+        IReadOnlyList<Cell> targetCells,
+        IReadOnlyList<Edge> targetEdges,
+        IReadOnlyDictionary<long, Cell> byId,
+        IReadOnlyDictionary<string, Geometry> baselineOwners,
+        IReadOnlyDictionary<long, Geometry> globalVoronoi,
+        Geometry regionalLand,
+        double widthMultiplier)
+    {
         var ownerScale = baselineOwners.Keys.ToDictionary(x => x, _ => 1.0, StringComparer.OrdinalIgnoreCase);
-        Dictionary<long, Geometry> finalCells = baselineByCell;
-        Dictionary<string, Geometry> finalOwners = baselineOwners;
+        IReadOnlyDictionary<string, Geometry> finalOwners = baselineOwners;
         Dictionary<string, double> finalChanges = baselineOwners.Keys.ToDictionary(x => x, _ => 0.0, StringComparer.OrdinalIgnoreCase);
         Geometry finalCorridor = GeometryFactory.CreatePolygon();
         Dictionary<string, double> finalWidths = new(StringComparer.OrdinalIgnoreCase);
@@ -49,7 +134,13 @@ static class AdaptiveHybridFrontierLab
         for (var iteration = 0; iteration < MaxGuardrailIterations; iteration++)
         {
             iterations = iteration + 1;
-            var (corridor, widths) = BuildAdaptiveCorridor(targetEdges, byId, baselineOwners, regionalLand, ownerScale);
+            var (corridor, widths) = BuildAdaptiveCorridor(
+                targetEdges,
+                byId,
+                baselineOwners,
+                regionalLand,
+                ownerScale,
+                widthMultiplier);
             var hybridCells = new Dictionary<long, Geometry>();
 
             foreach (var cell in targetCells)
@@ -72,7 +163,6 @@ static class AdaptiveHybridFrontierLab
                     return baseline.Area <= 0 ? 0 : diff.Area / baseline.Area;
                 }, StringComparer.OrdinalIgnoreCase);
 
-            finalCells = hybridCells;
             finalOwners = ownerRegions;
             finalChanges = changes;
             finalCorridor = corridor;
@@ -88,40 +178,14 @@ static class AdaptiveHybridFrontierLab
             }
         }
 
-        var guardrailSatisfied = finalChanges.All(x => x.Value <= MaxChangedAreaRatio + 1e-9);
-        var widthValues = finalWidths.Values.ToArray();
-
-        var payload = new
-        {
-            status = "experimental",
-            description = "C2 adaptive hybrid political-frontier lab. Corridor width varies by the smaller adjacent owner and is iteratively reduced when territorial deformation exceeds the guardrail.",
-            targetTerritories = TargetTerritories.OrderBy(x => x).ToArray(),
-            cellCount = targetCells.Length,
-            foreignAdjacencyCount = targetEdges.Length,
-            current = new { ownerRegions = OwnerRegionPayload(baselineOwners) },
-            variants = new Dictionary<string, object>
-            {
-                ["adaptive"] = new
-                {
-                    label = "C2 adaptatif",
-                    coastalGuardKm = CoastalGuardKm,
-                    maxChangedAreaRatio = MaxChangedAreaRatio,
-                    guardrailSatisfied,
-                    guardrailIterations = iterations,
-                    minAppliedCorridorKm = widthValues.Length == 0 ? 0 : widthValues.Min(),
-                    maxAppliedCorridorKm = widthValues.Length == 0 ? 0 : widthValues.Max(),
-                    corridor = GeometryToGeoJson(finalCorridor),
-                    ownerRegions = OwnerRegionPayload(finalOwners),
-                    changedAreaRatioByOwner = finalChanges,
-                    ownerScaleFactors = ownerScale,
-                    appliedWidthsKmByOwnerPair = finalWidths
-                }
-            },
-            cities = targetCells.Select(c => new { id = c.Id, territoryCode = c.TerritoryCode, ownerCode = c.OwnerCode, lat = c.Lat, lon = c.Lon }).ToArray()
-        };
-
-        await File.WriteAllTextAsync(Path.Combine(outDir, "hybrid-frontier-lab.json"), JsonSerializer.Serialize(payload));
-        Console.WriteLine($"Adaptive hybrid C2: {targetCells.Length} cells, guardrail={(guardrailSatisfied ? "ok" : "not-satisfied")}, iterations={iterations}, max-change={finalChanges.Values.Max():P1}.");
+        return new AdaptiveRun(
+            finalCorridor,
+            finalOwners.ToDictionary(x => x.Key, x => x.Value, StringComparer.OrdinalIgnoreCase),
+            finalChanges,
+            ownerScale,
+            finalWidths,
+            iterations,
+            finalChanges.All(x => x.Value <= MaxChangedAreaRatio + 1e-9));
     }
 
     static (Geometry Corridor, Dictionary<string, double> Widths) BuildAdaptiveCorridor(
@@ -129,7 +193,8 @@ static class AdaptiveHybridFrontierLab
         IReadOnlyDictionary<long, Cell> byId,
         IReadOnlyDictionary<string, Geometry> ownerRegions,
         Geometry regionalLand,
-        IReadOnlyDictionary<string, double> ownerScale)
+        IReadOnlyDictionary<string, double> ownerScale,
+        double widthMultiplier)
     {
         var parts = new List<Geometry>();
         var widths = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
@@ -139,9 +204,9 @@ static class AdaptiveHybridFrontierLab
             var aCell = byId[edge.A];
             var bCell = byId[edge.B];
             var smallerArea = Math.Min(ownerRegions[aCell.OwnerCode].Area, ownerRegions[bCell.OwnerCode].Area);
-            var baseWidth = BaseWidthKm(smallerArea);
-            var widthKm = baseWidth * Math.Min(ownerScale[aCell.OwnerCode], ownerScale[bCell.OwnerCode]);
-            widthKm = Math.Clamp(widthKm, 2.0, 25.0);
+            var requestedWidthKm = BaseWidthKm(smallerArea) * widthMultiplier;
+            var widthKm = requestedWidthKm * Math.Min(ownerScale[aCell.OwnerCode], ownerScale[bCell.OwnerCode]);
+            widthKm = Math.Clamp(widthKm, 2.0, 25.0 * widthMultiplier);
 
             var pairKey = string.Compare(aCell.OwnerCode, bCell.OwnerCode, StringComparison.OrdinalIgnoreCase) < 0
                 ? $"{aCell.OwnerCode}-{bCell.OwnerCode}"
@@ -210,27 +275,40 @@ static class AdaptiveHybridFrontierLab
         if (a.Length == 0) return GeometryFactory.CreatePolygon();
         if (a.Length == 1) return a[0];
         try { var r = UnaryUnionOp.Union(a); return r.IsValid ? r : r.Buffer(0); }
-        catch { var r = UnaryUnionOp.Union(a.Select(g => g.Buffer(0)).ToArray()); return r.IsValid ? r : r.Buffer(0); }
+        catch { var r = OverlayNGRobust.Union(a); return r.IsValid ? r : r.Buffer(0); }
     }
 
     static Geometry SafeIntersection(Geometry a, Geometry b)
     {
         if (a.IsEmpty || b.IsEmpty) return GeometryFactory.CreatePolygon();
         try { var r = a.Intersection(b); return r.IsValid ? r : r.Buffer(0); }
-        catch { var r = a.Buffer(0).Intersection(b.Buffer(0)); return r.IsValid ? r : r.Buffer(0); }
+        catch
+        {
+            var r = OverlayNGRobust.Overlay(a, b, SpatialFunction.Intersection);
+            return r.IsValid ? r : r.Buffer(0);
+        }
     }
 
     static Geometry SafeDifference(Geometry a, Geometry b)
     {
-        if (a.IsEmpty) return GeometryFactory.CreatePolygon(); if (b.IsEmpty) return a;
+        if (a.IsEmpty) return GeometryFactory.CreatePolygon();
+        if (b.IsEmpty) return a;
         try { var r = a.Difference(b); return r.IsValid ? r : r.Buffer(0); }
-        catch { var r = a.Buffer(0).Difference(b.Buffer(0)); return r.IsValid ? r : r.Buffer(0); }
+        catch
+        {
+            var r = OverlayNGRobust.Overlay(a, b, SpatialFunction.Difference);
+            return r.IsValid ? r : r.Buffer(0);
+        }
     }
 
     static Geometry SafeSymDifference(Geometry a, Geometry b)
     {
         try { var r = a.SymmetricDifference(b); return r.IsValid ? r : r.Buffer(0); }
-        catch { var r = a.Buffer(0).SymmetricDifference(b.Buffer(0)); return r.IsValid ? r : r.Buffer(0); }
+        catch
+        {
+            var r = OverlayNGRobust.Overlay(a, b, SpatialFunction.SymDifference);
+            return r.IsValid ? r : r.Buffer(0);
+        }
     }
 
     static Geometry SafeBuffer(Geometry g, double d)
