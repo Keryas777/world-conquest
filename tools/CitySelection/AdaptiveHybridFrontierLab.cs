@@ -1,5 +1,7 @@
 using System.Text.Json;
 using NetTopologySuite.Geometries;
+using NetTopologySuite.Operation.Overlay;
+using NetTopologySuite.Operation.OverlayNG;
 using NetTopologySuite.Operation.Union;
 using NetTopologySuite.Triangulate;
 
@@ -273,27 +275,40 @@ static class AdaptiveHybridFrontierLab
         if (a.Length == 0) return GeometryFactory.CreatePolygon();
         if (a.Length == 1) return a[0];
         try { var r = UnaryUnionOp.Union(a); return r.IsValid ? r : r.Buffer(0); }
-        catch { var r = UnaryUnionOp.Union(a.Select(g => g.Buffer(0)).ToArray()); return r.IsValid ? r : r.Buffer(0); }
+        catch { var r = OverlayNGRobust.Union(a); return r.IsValid ? r : r.Buffer(0); }
     }
 
     static Geometry SafeIntersection(Geometry a, Geometry b)
     {
         if (a.IsEmpty || b.IsEmpty) return GeometryFactory.CreatePolygon();
         try { var r = a.Intersection(b); return r.IsValid ? r : r.Buffer(0); }
-        catch { var r = a.Buffer(0).Intersection(b.Buffer(0)); return r.IsValid ? r : r.Buffer(0); }
+        catch
+        {
+            var r = OverlayNGRobust.Overlay(a, b, SpatialFunction.Intersection);
+            return r.IsValid ? r : r.Buffer(0);
+        }
     }
 
     static Geometry SafeDifference(Geometry a, Geometry b)
     {
-        if (a.IsEmpty) return GeometryFactory.CreatePolygon(); if (b.IsEmpty) return a;
+        if (a.IsEmpty) return GeometryFactory.CreatePolygon();
+        if (b.IsEmpty) return a;
         try { var r = a.Difference(b); return r.IsValid ? r : r.Buffer(0); }
-        catch { var r = a.Buffer(0).Difference(b.Buffer(0)); return r.IsValid ? r : r.Buffer(0); }
+        catch
+        {
+            var r = OverlayNGRobust.Overlay(a, b, SpatialFunction.Difference);
+            return r.IsValid ? r : r.Buffer(0);
+        }
     }
 
     static Geometry SafeSymDifference(Geometry a, Geometry b)
     {
         try { var r = a.SymmetricDifference(b); return r.IsValid ? r : r.Buffer(0); }
-        catch { var r = a.Buffer(0).SymmetricDifference(b.Buffer(0)); return r.IsValid ? r : r.Buffer(0); }
+        catch
+        {
+            var r = OverlayNGRobust.Overlay(a, b, SpatialFunction.SymDifference);
+            return r.IsValid ? r : r.Buffer(0);
+        }
     }
 
     static Geometry SafeBuffer(Geometry g, double d)
