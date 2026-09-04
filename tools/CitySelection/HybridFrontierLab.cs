@@ -217,6 +217,9 @@ static class HybridFrontierLab
         var corridor = SafeUnion(corridorParts);
         corridor = SafeIntersection(corridor, regionalLand);
 
+        // Keep the coastline and the exact land/sea meeting point stable. The
+        // experimental deformation is therefore prevented from reaching the
+        // exterior boundary of the regional land mask.
         if (coastalGuardKm > 0)
         {
             var coastalGuard = SafeBuffer(regionalLand.Boundary, coastalGuardKm / 111.32);
