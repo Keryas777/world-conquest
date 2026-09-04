@@ -268,7 +268,7 @@ static class HybridFrontierLab
         }
         catch
         {
-            var result = UnaryUnionOp.Union(array.Select(g => g.Buffer(0)).ToArray());
+            var result = OverlayNGRobust.Union(array);
             return result.IsValid ? result : result.Buffer(0);
         }
     }
@@ -283,7 +283,7 @@ static class HybridFrontierLab
         }
         catch
         {
-            var result = a.Buffer(0).Intersection(b.Buffer(0));
+            var result = OverlayNGRobust.Overlay(a, b, SpatialFunction.Intersection);
             return result.IsValid ? result : result.Buffer(0);
         }
     }
@@ -299,7 +299,7 @@ static class HybridFrontierLab
         }
         catch
         {
-            var result = a.Buffer(0).Difference(b.Buffer(0));
+            var result = OverlayNGRobust.Overlay(a, b, SpatialFunction.Difference);
             return result.IsValid ? result : result.Buffer(0);
         }
     }
