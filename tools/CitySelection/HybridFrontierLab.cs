@@ -1,5 +1,7 @@
 using System.Text.Json;
 using NetTopologySuite.Geometries;
+using NetTopologySuite.Operation.Overlay;
+using NetTopologySuite.Operation.OverlayNG;
 using NetTopologySuite.Operation.Union;
 using NetTopologySuite.Triangulate;
 
@@ -311,7 +313,7 @@ static class HybridFrontierLab
         }
         catch
         {
-            var result = a.Buffer(0).SymmetricDifference(b.Buffer(0));
+            var result = OverlayNGRobust.Overlay(a, b, SpatialFunction.SymDifference);
             return result.IsValid ? result : result.Buffer(0);
         }
     }
