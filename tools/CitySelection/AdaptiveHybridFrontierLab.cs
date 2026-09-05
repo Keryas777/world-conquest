@@ -257,6 +257,26 @@ static class AdaptiveHybridFrontierLab
         }
 
         var ownerRegions = BuildOwnerRegions(targetCells, hybridCells);
+
+        if (protectedOwners.Count > 0)
+        {
+            // A protected owner is explicitly frozen at its baseline geometry. Remove that
+            // baseline from neighbouring experimental owner regions so the fallback cannot
+            // leave overlaps or keep reporting deformation on the already-protected owner.
+            var protectedGeometry = SafeUnion(
+                protectedOwners
+                    .Where(baselineOwners.ContainsKey)
+                    .Select(code => baselineOwners[code]));
+
+            foreach (var owner in ownerRegions.Keys.ToArray())
+            {
+                if (protectedOwners.Contains(owner))
+                    ownerRegions[owner] = baselineOwners[owner];
+                else
+                    ownerRegions[owner] = SafeDifference(ownerRegions[owner], protectedGeometry);
+            }
+        }
+
         var changes = ownerRegions.ToDictionary(
             x => x.Key,
             x =>
