@@ -17,6 +17,7 @@ static class AdaptiveHybridFrontierLab
         Dictionary<string, double> PairScaleFactors,
         Dictionary<string, double> AppliedWidthsKmByOwnerPair,
         string[] DisabledPairs,
+        string[] ProtectedOwners,
         int Iterations,
         bool GuardrailSatisfied);
 
@@ -91,7 +92,9 @@ static class AdaptiveHybridFrontierLab
                 constrainedPairCount = run.PairScaleFactors.Count(x => x.Value < 0.999999),
                 disabledPairCount = run.DisabledPairs.Length,
                 disabledPairCodes = run.DisabledPairs,
-                hardFallbackUsed = run.DisabledPairs.Length > 0,
+                protectedOwnerCount = run.ProtectedOwners.Length,
+                protectedOwnerCodes = run.ProtectedOwners,
+                hardFallbackUsed = run.DisabledPairs.Length > 0 || run.ProtectedOwners.Length > 0,
                 nearGuardrailOwnerCount = run.ChangedAreaRatioByOwner.Count(x => x.Value >= MaxChangedAreaRatio * 0.85),
                 corridor = GeometryToGeoJson(run.Corridor),
                 ownerRegions = OwnerRegionPayload(run.OwnerRegions),
@@ -102,7 +105,7 @@ static class AdaptiveHybridFrontierLab
 
             Console.WriteLine(
                 $"Adaptive hybrid {profile.Label}: guardrail={(run.GuardrailSatisfied ? "ok" : "FAILED")}, " +
-                $"iterations={run.Iterations}, disabled-pairs={run.DisabledPairs.Length}, " +
+                $"iterations={run.Iterations}, disabled-pairs={run.DisabledPairs.Length}, protected={run.ProtectedOwners.Length}, " +
                 $"max-change={(changeValues.Length == 0 ? 0 : changeValues.Max()):P1}, " +
                 $"mean-width={(widthValues.Length == 0 ? 0 : widthValues.Average()):F1} km.");
         }
@@ -110,7 +113,7 @@ static class AdaptiveHybridFrontierLab
         var payload = new
         {
             status = "experimental",
-            description = "C2.2 adaptive hybrid political-frontier lab. The 35% deformation guardrail remains a hard invariant, but correction is now applied per owner-pair instead of disabling whole owners. Only individual border pairs are disabled as a final fallback.",
+            description = "C2.2 adaptive hybrid political-frontier lab. The 35% deformation guardrail remains a hard invariant. Correction is applied per owner-pair; individual pairs are disabled as needed, and an owner whose own pairs are exhausted is locally protected from unrelated corridor spillover instead of disabling neighbouring experiments.",
             targetTerritories = TargetTerritories.OrderBy(x => x).ToArray(),
             cellCount = targetCells.Length,
             foreignAdjacencyCount = targetEdges.Length,
@@ -146,10 +149,11 @@ static class AdaptiveHybridFrontierLab
             .ToArray();
         var pairScale = pairKeys.ToDictionary(x => x, _ => 1.0, StringComparer.OrdinalIgnoreCase);
         var disabledPairs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var protectedOwners = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         var evaluation = EvaluateVariant(
             targetCells, targetEdges, byId, baselineOwners, globalVoronoi,
-            regionalLand, pairScale, disabledPairs, widthMultiplier);
+            regionalLand, pairScale, disabledPairs, protectedOwners, widthMultiplier);
         var iterations = 1;
 
         for (var iteration = 1;
@@ -170,7 +174,7 @@ static class AdaptiveHybridFrontierLab
 
             evaluation = EvaluateVariant(
                 targetCells, targetEdges, byId, baselineOwners, globalVoronoi,
-                regionalLand, pairScale, disabledPairs, widthMultiplier);
+                regionalLand, pairScale, disabledPairs, protectedOwners, widthMultiplier);
             iterations++;
         }
 
@@ -186,19 +190,25 @@ static class AdaptiveHybridFrontierLab
                 .OrderByDescending(p => evaluation.Widths.TryGetValue(p, out var width) ? width : 0)
                 .FirstOrDefault();
 
-            if (candidate is null)
+            if (candidate is not null)
+            {
+                disabledPairs.Add(candidate);
+                pairScale[candidate] = 0.0;
+            }
+            else if (!protectedOwners.Add(worstOwner))
+            {
                 throw new InvalidOperationException($"C2.2 hard guardrail cannot reduce remaining deformation for {worstOwner}.");
+            }
 
-            disabledPairs.Add(candidate);
-            pairScale[candidate] = 0.0;
             evaluation = EvaluateVariant(
                 targetCells, targetEdges, byId, baselineOwners, globalVoronoi,
-                regionalLand, pairScale, disabledPairs, widthMultiplier);
+                regionalLand, pairScale, disabledPairs, protectedOwners, widthMultiplier);
             iterations++;
 
             if (disabledPairs.Count == pairKeys.Length &&
+                protectedOwners.Count == baselineOwners.Count &&
                 evaluation.Changes.Any(x => x.Value > MaxChangedAreaRatio + GuardrailEpsilon))
-                throw new InvalidOperationException("C2.2 hard guardrail invariant failed even after disabling all experimental border pairs.");
+                throw new InvalidOperationException("C2.2 hard guardrail invariant failed even after disabling all pairs and protecting all owners.");
         }
 
         if (evaluation.Changes.Any(x => x.Value > MaxChangedAreaRatio + GuardrailEpsilon))
@@ -211,6 +221,7 @@ static class AdaptiveHybridFrontierLab
             pairScale,
             evaluation.Widths,
             disabledPairs.OrderBy(x => x).ToArray(),
+            protectedOwners.OrderBy(x => x).ToArray(),
             iterations,
             true);
     }
@@ -227,11 +238,12 @@ static class AdaptiveHybridFrontierLab
         Geometry regionalLand,
         IReadOnlyDictionary<string, double> pairScale,
         IReadOnlySet<string> disabledPairs,
+        IReadOnlySet<string> protectedOwners,
         double widthMultiplier)
     {
         var (corridor, widths) = BuildAdaptiveCorridor(
             targetEdges, byId, baselineOwners, regionalLand,
-            pairScale, disabledPairs, widthMultiplier);
+            pairScale, disabledPairs, protectedOwners, widthMultiplier);
 
         var hybridCells = new Dictionary<long, Geometry>();
         foreach (var cell in targetCells)
@@ -265,6 +277,7 @@ static class AdaptiveHybridFrontierLab
         Geometry regionalLand,
         IReadOnlyDictionary<string, double> pairScale,
         IReadOnlySet<string> disabledPairs,
+        IReadOnlySet<string> protectedOwners,
         double widthMultiplier)
     {
         var parts = new List<Geometry>();
@@ -295,6 +308,16 @@ static class AdaptiveHybridFrontierLab
         var corridor = SafeIntersection(SafeUnion(parts), regionalLand);
         var coastalGuard = SafeBuffer(regionalLand.Boundary, CoastalGuardKm / 111.32);
         corridor = SafeDifference(corridor, coastalGuard);
+
+        if (protectedOwners.Count > 0)
+        {
+            var protectedGeometry = SafeUnion(
+                protectedOwners
+                    .Where(ownerRegions.ContainsKey)
+                    .Select(code => ownerRegions[code]));
+            corridor = SafeDifference(corridor, protectedGeometry);
+        }
+
         return (corridor.IsValid ? corridor : corridor.Buffer(0), widths);
     }
 
