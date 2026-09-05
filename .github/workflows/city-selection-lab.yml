@@ -42,9 +42,7 @@ jobs:
             changed="$(git diff --name-only HEAD^ HEAD)"
             echo "Changed in latest commit:"
             echo "$changed"
-            if [[ -n "$changed" ]] && ! echo "$changed" | grep -Ev '^(tools/CitySelection/(AdaptiveHybridFrontierLab|HybridFrontierLab)\.cs|docs/hybrid-frontier-lab\.html|\.github/workflows/city-selection-lab\.yml)$' >/dev/null; then
-              frontier_only=false
-            else
+            if [[ -n "$changed" ]] && ! echo "$changed" | grep -Eqv '^(tools/CitySelection/(AdaptiveHybridFrontierLab|HybridFrontierLab)\.cs|docs/hybrid-frontier-lab\.html|\.github/workflows/city-selection-lab\.yml)$'; then
               frontier_only=true
             fi
           fi
