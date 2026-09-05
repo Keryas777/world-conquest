@@ -16,20 +16,48 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: city-selection-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   run-lab:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
+      - name: Determine experiment scope
+        id: scope
+        shell: bash
+        run: |
+          frontier_only=false
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            changed="$(git diff --name-only HEAD^ HEAD)"
+            echo "Changed in latest commit:"
+            echo "$changed"
+            if [[ -n "$changed" ]] && ! echo "$changed" | grep -Ev '^(tools/CitySelection/(AdaptiveHybridFrontierLab|HybridFrontierLab)\.cs)$' >/dev/null; then
+              frontier_only=false
+            else
+              frontier_only=true
+            fi
+          fi
+          echo "frontier_only=$frontier_only" >> "$GITHUB_OUTPUT"
+          echo "Frontier-only mode: $frontier_only"
       - name: Build
         run: dotnet build tools/CitySelection/CitySelection.csproj --configuration Release
-      - name: Run city-selection experiments
+      - name: Run frontier experiments only
+        if: steps.scope.outputs.frontier_only == 'true'
+        run: dotnet run --project tools/CitySelection/CitySelection.csproj --configuration Release -- --frontier-only
+      - name: Run full city-selection experiments
+        if: steps.scope.outputs.frontier_only != 'true'
         run: dotnet run --project tools/CitySelection/CitySelection.csproj --configuration Release
       - name: Show report
+        if: steps.scope.outputs.frontier_only != 'true'
         run: cat data/generated/city-selection/report.md
       - name: Publish generated frontier viewer to docs
         if: github.event_name != 'pull_request'
@@ -50,6 +78,7 @@ jobs:
             git push
           fi
       - name: Upload generated selections
+        if: steps.scope.outputs.frontier_only != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: city-selection-results
