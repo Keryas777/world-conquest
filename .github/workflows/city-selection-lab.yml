@@ -7,14 +7,20 @@ on:
     paths:
       - 'tools/CitySelection/**'
       - '.github/workflows/city-selection-lab.yml'
+      - 'docs/hybrid-frontier-lab.html'
   pull_request:
     paths:
       - 'tools/CitySelection/**'
       - '.github/workflows/city-selection-lab.yml'
+      - 'docs/hybrid-frontier-lab.html'
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: city-selection-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   run-lab:
@@ -22,15 +28,50 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
+      - name: Determine experiment scope
+        id: scope
+        shell: bash
+        run: |
+          frontier_only=false
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            changed="$(git diff --name-only HEAD^ HEAD)"
+            echo "Changed in latest commit:"
+            echo "$changed"
+            if [[ -n "$changed" ]] && ! echo "$changed" | grep -Eqv '^(tools/CitySelection/(AdaptiveHybridFrontierLab|HybridFrontierLab)\.cs|docs/hybrid-frontier-lab\.html|\.github/workflows/city-selection-lab\.yml)$'; then
+              frontier_only=true
+            fi
+          fi
+          echo "frontier_only=$frontier_only" >> "$GITHUB_OUTPUT"
+          echo "Frontier-only mode: $frontier_only"
       - name: Build
         run: dotnet build tools/CitySelection/CitySelection.csproj --configuration Release
-      - name: Run city-selection experiments
+      - name: Run frontier experiments only
+        if: steps.scope.outputs.frontier_only == 'true'
+        run: dotnet run --project tools/CitySelection/CitySelection.csproj --configuration Release -- --frontier-only
+      - name: Run full city-selection experiments
+        if: steps.scope.outputs.frontier_only != 'true'
         run: dotnet run --project tools/CitySelection/CitySelection.csproj --configuration Release
       - name: Show report
+        if: steps.scope.outputs.frontier_only != 'true'
         run: cat data/generated/city-selection/report.md
+      - name: Prepare frontier preview
+        if: github.event_name == 'pull_request' && steps.scope.outputs.frontier_only == 'true'
+        run: |
+          mkdir -p data/generated/frontier-preview
+          cp docs/hybrid-frontier-lab.html data/generated/frontier-preview/index.html
+          cp data/generated/city-selection/hybrid-frontier-lab.json data/generated/frontier-preview/hybrid-frontier-lab.json
+      - name: Upload frontier preview
+        if: github.event_name == 'pull_request' && steps.scope.outputs.frontier_only == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontier-preview
+          path: data/generated/frontier-preview/
+          if-no-files-found: error
       - name: Publish generated frontier viewer to docs
         if: github.event_name != 'pull_request'
         run: |
@@ -50,6 +91,7 @@ jobs:
             git push
           fi
       - name: Upload generated selections
+        if: steps.scope.outputs.frontier_only != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: city-selection-results

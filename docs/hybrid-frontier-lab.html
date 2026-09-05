@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <title>World Conquest — Hybrid Frontier Lab C2</title>
+  <title>World Conquest — Hybrid Frontier Lab C2.2</title>
   <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
   <style>
     html,body{margin:0;height:100%;background:#0b1020;color:#eef3ff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow:hidden}
@@ -20,11 +20,11 @@
 <body>
 <svg id="map"></svg>
 <div class="panel">
-  <div class="title">🧪 Frontières politiques cellulaires — balayage C2</div>
-  <div class="sub">Le plafond de déformation reste fixé à 35 %. On augmente seulement la largeur demandée par C2 pour voir jusqu’où le système peut devenir plus agressif avant que le garde-fou ne le contraigne.</div>
+  <div class="title">🧪 Frontières politiques cellulaires — C2.2</div>
+  <div class="sub">Le plafond dur reste fixé à 35 %. C2.2 contraint les couloirs frontière par frontière et peut protéger localement un territoire sans annuler l’expérience chez ses voisins.</div>
   <div class="controls">
     <button data-mode="current" class="active">A · actuel</button>
-    <button data-mode="adaptive">C2 · ×1</button>
+    <button data-mode="adaptive">C2.2 · ×1</button>
     <button data-mode="adaptive125">×1,25</button>
     <button data-mode="adaptive150">×1,5</button>
     <button data-mode="adaptive175">×1,75</button>
@@ -35,7 +35,7 @@
   </div>
   <div id="status" class="status">Chargement…</div>
 </div>
-<div class="legend">Zone test : FR · BE · LU · DE · CH · IT · ES. Statut EXPÉRIMENTAL. Les profils ×1 à ×2 utilisent tous le même garde-fou de 35 %.</div>
+<div class="legend">Zone test : FR · BE · LU · DE · CH · IT · ES. Statut EXPÉRIMENTAL. Aucune variante n’est validée par ce labo.</div>
 <script>
 (async()=>{
  const svg=d3.select('#map'),root=svg.append('g'),countryLayer=root.append('g'),corridorLayer=root.append('g'),debugLayer=root.append('g'),cityLayer=root.append('g');
@@ -48,7 +48,7 @@
  function fit(){projection=d3.geoMercator().fitExtent([[20,120],[width()-20,height()-30]],collection(data.current.ownerRegions));path=d3.geoPath(projection);}
  function draw(){
    const v=variant();
-   if(!v){status.innerHTML='<span class="error">Profil absent du JSON généré. Relancer la génération du labo.</span>';return;}
+   if(!v){status.innerHTML='<span class="error">Profil absent du JSON généré.</span>';return;}
    const regions=v.ownerRegions.filter(x=>x.geometry);
    countryLayer.selectAll('path').data(regions,d=>d.ownerCode).join('path').attr('class','country').attr('fill',d=>palette[d.ownerCode]||'#718096').attr('d',d=>path(feature(d)));
    const debug=document.querySelector('#oldBorders').checked&&currentMode!=='current';
@@ -63,11 +63,12 @@
    const guard=v.guardrailSatisfied?'<span class="ok">garde-fou OK</span>':'<span class="warn">garde-fou non satisfait</span>';
    const meanChange=((v.meanObservedChangedAreaRatio??0)*100).toFixed(2);
    const meanWidth=(v.meanAppliedCorridorKm??0).toFixed(1);
-   const constrained=v.constrainedOwnerCount??0,near=v.nearGuardrailOwnerCount??0;
-   status.innerHTML=`${v.label||'C2'} · largeur demandée ×${(v.widthMultiplier??1).toFixed(2)} · ${guard}<br>`+
-     `Couloirs finaux : ${v.minAppliedCorridorKm.toFixed(1)}–${v.maxAppliedCorridorKm.toFixed(1)} km · moyenne ${meanWidth} km · garde-côte ${v.coastalGuardKm} km<br>`+
+   const disabled=v.disabledPairCount??0,protectedOwners=v.protectedOwnerCodes||[],near=v.nearGuardrailOwnerCount??0;
+   const protectedText=protectedOwners.length?protectedOwners.join(', '):'aucun';
+   status.innerHTML=`${v.label||'C2.2'} · largeur demandée ×${(v.widthMultiplier??1).toFixed(2)} · ${guard}<br>`+
+     `Couloirs finaux : ${(v.minAppliedCorridorKm??0).toFixed(1)}–${(v.maxAppliedCorridorKm??0).toFixed(1)} km · moyenne ${meanWidth} km · garde-côte ${v.coastalGuardKm} km<br>`+
      `Déformation : max ${max?max[0]+' '+(max[1]*100).toFixed(2)+' %':'n/a'} · moyenne ${meanChange} % · plafond ${(v.maxChangedAreaRatio*100).toFixed(0)} %<br>`+
-     `${v.guardrailIterations} itération(s) · ${constrained} propriétaire(s) resserré(s) · ${near} proche(s) du plafond`;
+     `${v.guardrailIterations} itération(s) · ${disabled} paire(s) désactivée(s) · protection locale : ${protectedText} · ${near} proche(s) du plafond`;
  }
  function resize(){svg.attr('viewBox',`0 0 ${width()} ${height()}`);fit();draw();}
  try{
