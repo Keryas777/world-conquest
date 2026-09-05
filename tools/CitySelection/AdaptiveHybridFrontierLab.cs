@@ -311,6 +311,8 @@ static class AdaptiveHybridFrontierLab
 
         if (protectedOwners.Count > 0)
         {
+            // Local fallback only: keep a fully exhausted owner at its baseline shape without
+            // disabling the remaining pairwise experiments elsewhere in the test region.
             var protectedGeometry = SafeUnion(
                 protectedOwners
                     .Where(ownerRegions.ContainsKey)
