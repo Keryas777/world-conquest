@@ -7,10 +7,12 @@ on:
     paths:
       - 'tools/CitySelection/**'
       - '.github/workflows/city-selection-lab.yml'
+      - 'docs/hybrid-frontier-lab.html'
   pull_request:
     paths:
       - 'tools/CitySelection/**'
       - '.github/workflows/city-selection-lab.yml'
+      - 'docs/hybrid-frontier-lab.html'
   workflow_dispatch:
 
 permissions:
@@ -40,7 +42,7 @@ jobs:
             changed="$(git diff --name-only HEAD^ HEAD)"
             echo "Changed in latest commit:"
             echo "$changed"
-            if [[ -n "$changed" ]] && ! echo "$changed" | grep -Ev '^(tools/CitySelection/(AdaptiveHybridFrontierLab|HybridFrontierLab)\.cs)$' >/dev/null; then
+            if [[ -n "$changed" ]] && ! echo "$changed" | grep -Ev '^(tools/CitySelection/(AdaptiveHybridFrontierLab|HybridFrontierLab)\.cs|docs/hybrid-frontier-lab\.html|\.github/workflows/city-selection-lab\.yml)$' >/dev/null; then
               frontier_only=false
             else
               frontier_only=true
@@ -59,6 +61,19 @@ jobs:
       - name: Show report
         if: steps.scope.outputs.frontier_only != 'true'
         run: cat data/generated/city-selection/report.md
+      - name: Prepare frontier preview
+        if: github.event_name == 'pull_request' && steps.scope.outputs.frontier_only == 'true'
+        run: |
+          mkdir -p data/generated/frontier-preview
+          cp docs/hybrid-frontier-lab.html data/generated/frontier-preview/index.html
+          cp data/generated/city-selection/hybrid-frontier-lab.json data/generated/frontier-preview/hybrid-frontier-lab.json
+      - name: Upload frontier preview
+        if: github.event_name == 'pull_request' && steps.scope.outputs.frontier_only == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontier-preview
+          path: data/generated/frontier-preview/
+          if-no-files-found: error
       - name: Publish generated frontier viewer to docs
         if: github.event_name != 'pull_request'
         run: |
