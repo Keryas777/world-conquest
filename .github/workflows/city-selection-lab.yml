@@ -8,11 +8,13 @@ on:
       - 'tools/CitySelection/**'
       - '.github/workflows/city-selection-lab.yml'
       - 'docs/hybrid-frontier-lab.html'
+      - 'docs/c3-pair-local-frontier-lab.html'
   pull_request:
     paths:
       - 'tools/CitySelection/**'
       - '.github/workflows/city-selection-lab.yml'
       - 'docs/hybrid-frontier-lab.html'
+      - 'docs/c3-pair-local-frontier-lab.html'
   workflow_dispatch:
 
 permissions:
@@ -40,9 +42,9 @@ jobs:
           frontier_only=false
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             changed="$(git diff --name-only HEAD^ HEAD)"
-            echo "Changed in latest commit:"
+            echo "Changed in pull request:"
             echo "$changed"
-            if [[ -n "$changed" ]] && ! echo "$changed" | grep -Eqv '^(tools/CitySelection/(AdaptiveHybridFrontierLab|HybridFrontierLab)\.cs|docs/hybrid-frontier-lab\.html|\.github/workflows/city-selection-lab\.yml)$'; then
+            if [[ -n "$changed" ]] && ! echo "$changed" | grep -Ev '^(tools/CitySelection/(AdaptiveHybridFrontierLab|HybridFrontierLab|PairLocalFrontierLab|Program)\.cs|docs/(hybrid-frontier-lab|c3-pair-local-frontier-lab)\.html|\.github/workflows/city-selection-lab\.yml)$' >/dev/null; then
               frontier_only=true
             fi
           fi
@@ -60,13 +62,14 @@ jobs:
         if: steps.scope.outputs.frontier_only != 'true'
         run: cat data/generated/city-selection/report.md
       - name: Prepare frontier preview
-        if: github.event_name == 'pull_request' && steps.scope.outputs.frontier_only == 'true'
+        if: always() && github.event_name == 'pull_request' && steps.scope.outputs.frontier_only == 'true'
         run: |
           mkdir -p data/generated/frontier-preview
-          cp docs/hybrid-frontier-lab.html data/generated/frontier-preview/index.html
-          cp data/generated/city-selection/hybrid-frontier-lab.json data/generated/frontier-preview/hybrid-frontier-lab.json
+          cp docs/c3-pair-local-frontier-lab.html data/generated/frontier-preview/index.html
+          test -f data/generated/city-selection/c3-pair-local-frontier-lab.json && cp data/generated/city-selection/c3-pair-local-frontier-lab.json data/generated/frontier-preview/c3-pair-local-frontier-lab.json || true
+          test -f data/generated/city-selection/hybrid-frontier-lab.json && cp data/generated/city-selection/hybrid-frontier-lab.json data/generated/frontier-preview/hybrid-frontier-lab.json || true
       - name: Upload frontier preview
-        if: github.event_name == 'pull_request' && steps.scope.outputs.frontier_only == 'true'
+        if: always() && github.event_name == 'pull_request' && steps.scope.outputs.frontier_only == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: frontier-preview
@@ -81,9 +84,10 @@ jobs:
           cp data/generated/city-selection/voronoi-graph.json docs/voronoi-graph.json
           cp data/generated/city-selection/world-selection-C.json docs/world-selection-C.json
           cp data/generated/city-selection/hybrid-frontier-lab.json docs/hybrid-frontier-lab.json
+          cp data/generated/city-selection/c3-pair-local-frontier-lab.json docs/c3-pair-local-frontier-lab.json
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/frontiers.html docs/frontier-graph.json docs/voronoi.html docs/voronoi-graph.json docs/world-selection-C.json docs/hybrid-frontier-lab.json
+          git add docs/frontiers.html docs/frontier-graph.json docs/voronoi.html docs/voronoi-graph.json docs/world-selection-C.json docs/hybrid-frontier-lab.json docs/c3-pair-local-frontier-lab.json
           if git diff --cached --quiet; then
             echo "No generated viewer changes to publish."
           else
