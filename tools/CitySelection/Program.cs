@@ -81,6 +81,7 @@ static class Program
             Console.WriteLine("Frontier-only mode: reusing published Voronoi graph; skipping GeoNames, world selection and global Voronoi regeneration.");
             await HybridFrontierLab.GenerateAsync(outDir);
             await AdaptiveHybridFrontierLab.GenerateAsync(outDir);
+            await PairLocalFrontierLab.GenerateAsync(outDir);
             Console.WriteLine($"Frontier-only outputs written to {outDir}");
             return;
         }
@@ -106,6 +107,7 @@ static class Program
         await VoronoiLab.GenerateWorldAsync(http,outDir,worldSelection,.60);
         await HybridFrontierLab.GenerateAsync(outDir);
         await AdaptiveHybridFrontierLab.GenerateAsync(outDir);
+        await PairLocalFrontierLab.GenerateAsync(outDir);
         Console.WriteLine($"Outputs written to {outDir}");
     }
 }
