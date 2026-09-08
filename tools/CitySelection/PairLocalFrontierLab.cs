@@ -42,7 +42,7 @@ static class PairLocalFrontierLab
         var baselineOwners = BuildOwnerRegions(targetCells, baselineByCell);
         var ownerRegions = baselineOwners.ToDictionary(x => x.Key, x => x.Value, StringComparer.OrdinalIgnoreCase);
 
-        var usedCorridor = GeometryFactory.CreatePolygon();
+        Geometry usedCorridor = GeometryFactory.CreatePolygon();
         var pairMetrics = new List<object>();
         var pairKeys = targetEdges
             .Select(e => PairKey(byId[e.A].OwnerCode, byId[e.B].OwnerCode))
