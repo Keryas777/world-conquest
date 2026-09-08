@@ -79,6 +79,8 @@ static class PairLocalFrontierLab
                 .Where(c => c.OwnerCode.Equals(ownerA, StringComparison.OrdinalIgnoreCase) ||
                             c.OwnerCode.Equals(ownerB, StringComparison.OrdinalIgnoreCase))
                 .ToArray();
+
+            Console.WriteLine($"C3 pair {pairKey}: {pairCells.Length} candidate sites, width={widthKm:F1} km.");
             var pairVoronoi = BuildVoronoi(pairCells, pairDomain.EnvelopeInternal);
 
             Geometry AssignedTo(string owner) => SafeUnion(pairCells
@@ -205,26 +207,60 @@ static class PairLocalFrontierLab
 
     static Dictionary<long, Geometry> BuildVoronoi(IReadOnlyList<Cell> cells, Envelope envelope)
     {
-        var ids = new Dictionary<string, long>();
+        // NetTopologySuite's incremental Delaunay triangulator can fail to converge when
+        // distinct GeoNames entries share the same (or effectively identical) coordinates.
+        // Collapse exact rounded duplicates deterministically, then retry with a tiny snap
+        // tolerance for genuinely near-coincident sites. This is only numerical hygiene;
+        // it does not broaden which owners may compete in a pair-local corridor.
+        var representatives = new Dictionary<string, Cell>(StringComparer.Ordinal);
+        foreach (var cell in cells.OrderBy(c => c.Id))
+        {
+            var key = Key(new Coordinate(cell.Lon, cell.Lat));
+            representatives.TryAdd(key, cell);
+        }
+
+        var ids = new Dictionary<string, long>(StringComparer.Ordinal);
         var sites = new List<Coordinate>();
-        foreach (var cell in cells)
+        foreach (var cell in representatives.Values.OrderBy(c => c.Id))
         {
             var point = new Coordinate(cell.Lon, cell.Lat);
             ids[Key(point)] = cell.Id;
             sites.Add(point);
         }
 
-        var builder = new VoronoiDiagramBuilder { ClipEnvelope = envelope, Tolerance = 0.0 };
-        builder.SetSites(sites);
-        var diagram = builder.GetDiagram(GeometryFactory);
-        var result = new Dictionary<long, Geometry>();
-        for (var i = 0; i < diagram.NumGeometries; i++)
+        if (sites.Count == 0)
+            return new Dictionary<long, Geometry>();
+
+        var tolerances = new[] { 0.0, 1e-9, 1e-8, 1e-7, 1e-6 };
+        Exception? lastError = null;
+        foreach (var tolerance in tolerances)
         {
-            var face = diagram.GetGeometryN(i);
-            if (face.UserData is Coordinate site && ids.TryGetValue(Key(site), out var id))
-                result[id] = face;
+            try
+            {
+                var builder = new VoronoiDiagramBuilder { ClipEnvelope = envelope, Tolerance = tolerance };
+                builder.SetSites(sites);
+                var diagram = builder.GetDiagram(GeometryFactory);
+                var result = new Dictionary<long, Geometry>();
+                for (var i = 0; i < diagram.NumGeometries; i++)
+                {
+                    var face = diagram.GetGeometryN(i);
+                    if (face.UserData is Coordinate site && ids.TryGetValue(Key(site), out var id))
+                        result[id] = face;
+                }
+
+                if (tolerance > 0)
+                    Console.WriteLine($"C3 Voronoi recovered with tolerance {tolerance:G} ({sites.Count} unique sites from {cells.Count} candidates).");
+                return result;
+            }
+            catch (NetTopologySuite.Triangulate.QuadEdge.LocateFailureException ex)
+            {
+                lastError = ex;
+            }
         }
-        return result;
+
+        throw new InvalidOperationException(
+            $"C3 pair-local Voronoi failed after duplicate-site collapse and tolerance retries ({sites.Count} unique sites from {cells.Count} candidates).",
+            lastError);
     }
 
     static double PairwiseOverlapArea(IReadOnlyDictionary<string, Geometry> owners)
