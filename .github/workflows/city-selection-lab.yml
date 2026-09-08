@@ -54,7 +54,18 @@ jobs:
         run: dotnet build tools/CitySelection/CitySelection.csproj --configuration Release
       - name: Run frontier experiments only
         if: steps.scope.outputs.frontier_only == 'true'
-        run: dotnet run --project tools/CitySelection/CitySelection.csproj --configuration Release -- --frontier-only
+        shell: bash
+        run: |
+          # C3 iteration mode: reuse the published Voronoi graph but do not spend ~12 min
+          # recalculating the already-audited Hybrid/C2.2 experiments on every PR push.
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('tools/CitySelection/Program.cs')
+          text = path.read_text()
+          text = text.replace('            await HybridFrontierLab.GenerateAsync(outDir);\n            await AdaptiveHybridFrontierLab.GenerateAsync(outDir);\n            await PairLocalFrontierLab.GenerateAsync(outDir);', '            await PairLocalFrontierLab.GenerateAsync(outDir);', 1)
+          path.write_text(text)
+          PY
+          dotnet run --project tools/CitySelection/CitySelection.csproj --configuration Release -- --frontier-only
       - name: Run full city-selection experiments
         if: steps.scope.outputs.frontier_only != 'true'
         run: dotnet run --project tools/CitySelection/CitySelection.csproj --configuration Release
