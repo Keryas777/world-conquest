@@ -75,12 +75,37 @@ static class PairLocalFrontierLab
             if (pairDomain.IsEmpty)
                 continue;
 
+            // C3 is deliberately local: cities far inside either country cannot influence
+            // a narrow border corridor. Restrict the triangulation to cells touching a
+            // generous influence band around the pair domain. This avoids feeding the
+            // Delaunay solver dozens of irrelevant, widely-spread sites and keeps the
+            // experiment faithful to its pair-local intent.
+            var influenceKm = Math.Max(75.0, widthKm * 3.0);
+            var influenceZone = SafeBuffer(pairDomain, influenceKm / 111.32);
             var pairCells = targetCells
                 .Where(c => c.OwnerCode.Equals(ownerA, StringComparison.OrdinalIgnoreCase) ||
                             c.OwnerCode.Equals(ownerB, StringComparison.OrdinalIgnoreCase))
+                .Where(c => !SafeIntersection(c.Geometry, influenceZone).IsEmpty)
                 .ToArray();
 
-            Console.WriteLine($"C3 pair {pairKey}: {pairCells.Length} candidate sites, width={widthKm:F1} km.");
+            // Defensive fallback: a pathological narrow domain should still retain at least
+            // one site from each owner rather than silently turning the pair into a one-sided
+            // contest.
+            foreach (var owner in new[] { ownerA, ownerB })
+            {
+                if (pairCells.Any(c => c.OwnerCode.Equals(owner, StringComparison.OrdinalIgnoreCase)))
+                    continue;
+
+                var nearest = targetCells
+                    .Where(c => c.OwnerCode.Equals(owner, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(c => c.Geometry.Distance(pairDomain))
+                    .ThenBy(c => c.Id)
+                    .FirstOrDefault();
+                if (nearest is not null)
+                    pairCells = pairCells.Append(nearest).ToArray();
+            }
+
+            Console.WriteLine($"C3 pair {pairKey}: {pairCells.Length} local candidate sites, width={widthKm:F1} km, influence={influenceKm:F1} km.");
             var pairVoronoi = BuildVoronoi(pairCells, pairDomain.EnvelopeInternal);
 
             Geometry AssignedTo(string owner) => SafeUnion(pairCells
@@ -102,6 +127,8 @@ static class PairLocalFrontierLab
             {
                 pair = pairKey,
                 widthKm,
+                influenceKm,
+                candidateSiteCount = pairCells.Length,
                 corridorArea = exclusiveCorridor.Area,
                 localGapArea = localGap.Area,
                 localOverlapArea = localOverlap.Area,
@@ -135,7 +162,7 @@ static class PairLocalFrontierLab
         var payload = new
         {
             status = "experimental",
-            description = "C3 pair-local frontier experiment. Each terrestrial owner-pair keeps an exclusive corridor and only cities owned by that pair may compete inside it. Pair corridors are made mutually exclusive deterministically before recomposition.",
+            description = "C3 pair-local frontier experiment. Each terrestrial owner-pair keeps an exclusive corridor and only nearby cities owned by that pair may compete inside it. Pair corridors are made mutually exclusive deterministically before recomposition.",
             widthMultiplier = WidthMultiplier,
             coastalGuardKm = CoastalGuardKm,
             targetTerritories = TargetTerritories.OrderBy(x => x).ToArray(),
@@ -207,37 +234,55 @@ static class PairLocalFrontierLab
 
     static Dictionary<long, Geometry> BuildVoronoi(IReadOnlyList<Cell> cells, Envelope envelope)
     {
-        // NetTopologySuite's incremental Delaunay triangulator can fail to converge when
-        // distinct GeoNames entries share the same (or effectively identical) coordinates.
-        // Collapse exact rounded duplicates deterministically, then retry with a tiny snap
-        // tolerance for genuinely near-coincident sites. This is only numerical hygiene;
-        // it does not broaden which owners may compete in a pair-local corridor.
-        var representatives = new Dictionary<string, Cell>(StringComparer.Ordinal);
-        foreach (var cell in cells.OrderBy(c => c.Id))
-        {
-            var key = Key(new Coordinate(cell.Lon, cell.Lat));
-            representatives.TryAdd(key, cell);
-        }
-
-        var ids = new Dictionary<string, long>(StringComparer.Ordinal);
-        var sites = new List<Coordinate>();
-        foreach (var cell in representatives.Values.OrderBy(c => c.Id))
-        {
-            var point = new Coordinate(cell.Lon, cell.Lat);
-            ids[Key(point)] = cell.Id;
-            sites.Add(point);
-        }
-
-        if (sites.Count == 0)
+        if (cells.Count == 0)
             return new Dictionary<long, Geometry>();
 
-        var tolerances = new[] { 0.0, 1e-9, 1e-8, 1e-7, 1e-6 };
+        // NTS's incremental Delaunay triangulator is sensitive to nearly coincident sites.
+        // Retry on progressively coarser deterministic grids. Even the coarsest fallback
+        // (1e-4 degree, roughly 11 m latitude) is tiny compared with a 20-40 km frontier
+        // corridor and therefore only changes numerical conditioning, not the design rule.
+        var snapGrids = new[] { 0.0, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4 };
         Exception? lastError = null;
-        foreach (var tolerance in tolerances)
+
+        foreach (var grid in snapGrids)
         {
+            var representatives = new Dictionary<string, Cell>(StringComparer.Ordinal);
+            var snappedById = new Dictionary<long, Coordinate>();
+
+            foreach (var cell in cells.OrderBy(c => c.Id))
+            {
+                var point = grid <= 0
+                    ? new Coordinate(cell.Lon, cell.Lat)
+                    : new Coordinate(Snap(cell.Lon, grid), Snap(cell.Lat, grid));
+                var key = Key(point);
+                if (representatives.TryAdd(key, cell))
+                    snappedById[cell.Id] = point;
+            }
+
+            var ids = new Dictionary<string, long>(StringComparer.Ordinal);
+            var sites = new List<Coordinate>();
+            foreach (var cell in representatives.Values.OrderBy(c => c.Id))
+            {
+                var point = snappedById[cell.Id];
+                ids[Key(point)] = cell.Id;
+                sites.Add(point);
+            }
+
+            if (sites.Count == 1)
+            {
+                return new Dictionary<long, Geometry>
+                {
+                    [representatives.Values.Single().Id] = GeometryFactory.ToGeometry(envelope)
+                };
+            }
+
             try
             {
-                var builder = new VoronoiDiagramBuilder { ClipEnvelope = envelope, Tolerance = tolerance };
+                var builder = new VoronoiDiagramBuilder
+                {
+                    ClipEnvelope = envelope,
+                    Tolerance = grid <= 0 ? 0.0 : grid
+                };
                 builder.SetSites(sites);
                 var diagram = builder.GetDiagram(GeometryFactory);
                 var result = new Dictionary<long, Geometry>();
@@ -248,8 +293,8 @@ static class PairLocalFrontierLab
                         result[id] = face;
                 }
 
-                if (tolerance > 0)
-                    Console.WriteLine($"C3 Voronoi recovered with tolerance {tolerance:G} ({sites.Count} unique sites from {cells.Count} candidates).");
+                if (grid > 0)
+                    Console.WriteLine($"C3 Voronoi recovered on {grid:G}° snap grid ({sites.Count} sites from {cells.Count} local candidates).");
                 return result;
             }
             catch (NetTopologySuite.Triangulate.QuadEdge.LocateFailureException ex)
@@ -259,9 +304,11 @@ static class PairLocalFrontierLab
         }
 
         throw new InvalidOperationException(
-            $"C3 pair-local Voronoi failed after duplicate-site collapse and tolerance retries ({sites.Count} unique sites from {cells.Count} candidates).",
+            $"C3 pair-local Voronoi failed after local-site filtering and snap-grid retries ({cells.Count} candidates).",
             lastError);
     }
+
+    static double Snap(double value, double grid) => Math.Round(value / grid) * grid;
 
     static double PairwiseOverlapArea(IReadOnlyDictionary<string, Geometry> owners)
     {
