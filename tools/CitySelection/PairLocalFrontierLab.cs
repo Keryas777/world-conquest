@@ -59,14 +59,39 @@ static class PairLocalFrontierLab
             Console.WriteLine($"C3 pair {pairKey}: {pairCells.Length} local candidate sites, width={widthKm:F1} km, influence={influenceKm:F1} km.");
             var pairVoronoi = BuildVoronoi(pairCells, pairDomain.EnvelopeInternal);
             Geometry AssignedTo(string owner) => SafeUnion(pairCells.Where(c => c.OwnerCode.Equals(owner, StringComparison.OrdinalIgnoreCase)).Select(c => pairVoronoi.TryGetValue(c.Id, out var face) ? SafeIntersection(face, pairDomain) : GeometryFactory.CreatePolygon()));
+
+            // Canonicalize the pair domain into an exact two-owner partition. Numerical
+            // overlay noise must not create slivers shared by both owners.
             var insideA = AssignedTo(ownerA);
-            var insideB = AssignedTo(ownerB);
+            var insideB = SafeDifference(pairDomain, insideA);
             var assigned = SafeUnion(new[] { insideA, insideB });
             var localGap = SafeDifference(pairDomain, assigned);
             var localOverlap = SafeIntersection(insideA, insideB);
-            ownerRegions[ownerA] = SafeUnion(new[] { SafeDifference(ownerRegions[ownerA], exclusiveCorridor), insideA });
-            ownerRegions[ownerB] = SafeUnion(new[] { SafeDifference(ownerRegions[ownerB], exclusiveCorridor), insideB });
-            pairMetrics.Add(new { pair = pairKey, widthKm, influenceKm, candidateSiteCount = pairCells.Length, corridorArea = exclusiveCorridor.Area, localGapArea = localGap.Area, localOverlapArea = localOverlap.Area, competingOwners = new[] { ownerA, ownerB } });
+
+            // Recompose only the domain that is actually contested by this pair. The old
+            // implementation removed the whole corridor, even outside A∪B, which could cut
+            // unrelated pieces. Reject any pair update that would create extra polygon
+            // components for either owner; leaving that pair on its current geometry is a
+            // deliberate local fallback, not a global owner reset.
+            var candidateA = SafeUnion(new[] { SafeDifference(ownerRegions[ownerA], pairDomain), insideA });
+            var candidateB = SafeUnion(new[] { SafeDifference(ownerRegions[ownerB], pairDomain), insideB });
+            var baselineComponentsA = PolygonComponentCount(baselineOwners[ownerA]);
+            var baselineComponentsB = PolygonComponentCount(baselineOwners[ownerB]);
+            var candidateComponentsA = PolygonComponentCount(candidateA);
+            var candidateComponentsB = PolygonComponentCount(candidateB);
+            var topologyRejected = candidateComponentsA > baselineComponentsA || candidateComponentsB > baselineComponentsB;
+
+            if (!topologyRejected)
+            {
+                ownerRegions[ownerA] = candidateA;
+                ownerRegions[ownerB] = candidateB;
+            }
+            else
+            {
+                Console.WriteLine($"C3 pair {pairKey}: topology guard rejected update ({ownerA} {candidateComponentsA}/{baselineComponentsA}, {ownerB} {candidateComponentsB}/{baselineComponentsB} components).");
+            }
+
+            pairMetrics.Add(new { pair = pairKey, widthKm, influenceKm, candidateSiteCount = pairCells.Length, corridorArea = exclusiveCorridor.Area, localGapArea = localGap.Area, localOverlapArea = localOverlap.Area, topologyRejected, candidateComponents = new { ownerA = candidateComponentsA, ownerB = candidateComponentsB }, competingOwners = new[] { ownerA, ownerB } });
         }
 
         var finalUnion = SafeUnion(ownerRegions.Values);
@@ -78,9 +103,9 @@ static class PairLocalFrontierLab
         var overlapSatisfied = overlapArea <= InvariantAreaTolerance;
         var topologySatisfied = topology.All(x => x.newComponents == 0);
         var invariantsSatisfied = coverageSatisfied && overlapSatisfied && topologySatisfied;
-        var payload = new { status = "experimental", description = "C3 pair-local frontier experiment. Each terrestrial owner-pair keeps an exclusive corridor and only nearby cities owned by that pair may compete inside it. Pair corridors are made mutually exclusive deterministically before recomposition.", widthMultiplier = WidthMultiplier, coastalGuardKm = CoastalGuardKm, targetTerritories = TargetTerritories.OrderBy(x => x).ToArray(), cellCount = targetCells.Length, foreignAdjacencyCount = targetEdges.Length, pairCount = pairKeys.Length, current = new { ownerRegions = OwnerRegionPayload(baselineOwners) }, c3 = new { ownerRegions = OwnerRegionPayload(ownerRegions), corridor = GeometryToGeoJson(usedCorridor), pairMetrics, invariants = new { satisfied = invariantsSatisfied, coverageSatisfied, overlapSatisfied, topologySatisfied, gapArea = gap.Area, outsideArea = outside.Area, overlapArea, topology } }, cities = targetCells.Select(c => new { id = c.Id, territoryCode = c.TerritoryCode, ownerCode = c.OwnerCode, lat = c.Lat, lon = c.Lon }).ToArray() };
+        var payload = new { status = "experimental", description = "C3 pair-local frontier experiment. Each terrestrial owner-pair keeps an exclusive corridor and only nearby cities owned by that pair may compete inside it. Pair corridors are made mutually exclusive deterministically before recomposition, and pair updates that would create extra owner components are rejected locally.", widthMultiplier = WidthMultiplier, coastalGuardKm = CoastalGuardKm, targetTerritories = TargetTerritories.OrderBy(x => x).ToArray(), cellCount = targetCells.Length, foreignAdjacencyCount = targetEdges.Length, pairCount = pairKeys.Length, current = new { ownerRegions = OwnerRegionPayload(baselineOwners) }, c3 = new { ownerRegions = OwnerRegionPayload(ownerRegions), corridor = GeometryToGeoJson(usedCorridor), pairMetrics, invariants = new { satisfied = invariantsSatisfied, coverageSatisfied, overlapSatisfied, topologySatisfied, gapArea = gap.Area, outsideArea = outside.Area, overlapArea, topology } }, cities = targetCells.Select(c => new { id = c.Id, territoryCode = c.TerritoryCode, ownerCode = c.OwnerCode, lat = c.Lat, lon = c.Lon }).ToArray() };
         await File.WriteAllTextAsync(Path.Combine(outDir, "c3-pair-local-frontier-lab.json"), JsonSerializer.Serialize(payload));
-        Console.WriteLine($"C3 pair-local: pairs={pairKeys.Length}, gap={gap.Area:F8}, overlap={overlapArea:F8}, new-components={topology.Sum(x => x.newComponents)}, invariants={(invariantsSatisfied ? "ok" : "FAILED")}.");
+        Console.WriteLine($"C3 pair-local: pairs={pairKeys.Length}, gap={gap.Area:F8}, overlap={overlapArea:F8}, new-components={topology.Sum(x => x.newComponents)}, rejected-pairs={pairMetrics.Count(x => (bool)x.GetType().GetProperty("topologyRejected")!.GetValue(x)! )}, invariants={(invariantsSatisfied ? "ok" : "FAILED")}.");
         if (!invariantsSatisfied) throw new InvalidOperationException($"C3 geometry invariants failed: coverage={coverageSatisfied}, overlap={overlapSatisfied}, topology={topologySatisfied}.");
     }
 
