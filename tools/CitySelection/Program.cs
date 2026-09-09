@@ -70,6 +70,20 @@ static class Program
         var outDir = Path.Combine("data", "generated", "city-selection");
         Directory.CreateDirectory(outDir);
 
+        if (args.Contains("--c4-only", StringComparer.OrdinalIgnoreCase))
+        {
+            var publishedGraph = Path.Combine("docs", "voronoi-graph.json");
+            var localGraph = Path.Combine(outDir, "voronoi-graph.json");
+            if (!File.Exists(publishedGraph))
+                throw new FileNotFoundException("C4 mode requires docs/voronoi-graph.json.", publishedGraph);
+
+            File.Copy(publishedGraph, localGraph, overwrite: true);
+            Console.WriteLine("C4-only mode: reusing published Voronoi graph; no territory surfaces will be recomposed.");
+            await BoundaryNodeChainLab.GenerateAsync(outDir);
+            Console.WriteLine($"C4 output written to {outDir}");
+            return;
+        }
+
         if (args.Contains("--frontier-only", StringComparer.OrdinalIgnoreCase))
         {
             var publishedGraph = Path.Combine("docs", "voronoi-graph.json");
