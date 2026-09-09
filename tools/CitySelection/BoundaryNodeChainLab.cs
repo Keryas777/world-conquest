@@ -1,6 +1,7 @@
 using System.Text.Json;
 using NetTopologySuite.Geometries;
 using NetTopologySuite.Operation.Linemerge;
+using NetTopologySuite.Operation.Overlay;
 using NetTopologySuite.Operation.OverlayNG;
 
 static class BoundaryNodeChainLab
@@ -67,9 +68,6 @@ static class BoundaryNodeChainLab
             var borderUnion = SafeUnion(borderComponents.Cast<Geometry>());
             var candidates = new List<Node>();
 
-            // Candidate nodes are where internal Voronoi edges from either owner hit
-            // the real A-B frontier. This is the exact construction proposed for C4:
-            // keep those frontier nodes, order them, then connect them by straight chords.
             foreach (var edge in edges.Where(e => !e.Foreign))
             {
                 var a = byId[edge.A];
