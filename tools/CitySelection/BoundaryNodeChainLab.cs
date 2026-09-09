@@ -182,9 +182,12 @@ static class BoundaryNodeChainLab
             yield break;
         }
 
-        for (var i = 0; i < geometry.NumGeometries; i++)
-            foreach (var linePart in EnumerateLines(geometry.GetGeometryN(i)))
-                yield return linePart;
+        if (geometry is GeometryCollection collection)
+        {
+            for (var i = 0; i < collection.NumGeometries; i++)
+                foreach (var linePart in EnumerateLines(collection.GetGeometryN(i)))
+                    yield return linePart;
+        }
     }
 
     static void AddNode(List<Node> nodes, Node candidate)
