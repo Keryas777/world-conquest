@@ -3,68 +3,134 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>World Conquest · C4 Boundary Node Chain</title>
+  <title>World Conquest · C4.1 Boundary Node Chain</title>
   <style>
     :root { color-scheme: dark; font-family: system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
-    * { box-sizing: border-box; }
+    * { box-sizing:border-box; }
     html,body { margin:0; width:100%; height:100%; overflow:hidden; background:#111827; color:#f8fafc; }
     #map { position:absolute; inset:0; background:#dce3e8; touch-action:none; }
     svg { width:100%; height:100%; display:block; }
-    .panel { position:absolute; left:14px; right:14px; top:calc(14px + env(safe-area-inset-top)); padding:14px 16px; border-radius:18px; background:rgba(15,23,42,.92); box-shadow:0 8px 30px rgba(0,0,0,.28); z-index:2; }
-    h1 { margin:0 0 4px; font-size:18px; letter-spacing:.03em; }
-    .sub { color:#cbd5e1; font-size:13px; line-height:1.35; }
-    .controls { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
-    button { border:1px solid #475569; background:#1e293b; color:#f8fafc; border-radius:10px; padding:8px 10px; font-weight:700; }
+    .panel { position:absolute; left:12px; right:12px; top:calc(10px + env(safe-area-inset-top)); padding:12px 14px; border-radius:18px; background:rgba(15,23,42,.94); box-shadow:0 8px 30px rgba(0,0,0,.28); z-index:2; }
+    h1 { margin:0 0 4px; font-size:17px; letter-spacing:.03em; }
+    .sub { color:#cbd5e1; font-size:12px; line-height:1.35; }
+    .controls { display:flex; gap:7px; margin-top:9px; flex-wrap:wrap; }
+    button { min-height:40px; border:1px solid #475569; background:#1e293b; color:#f8fafc; border-radius:10px; padding:7px 10px; font-weight:700; }
     button.active { background:#f8fafc; color:#0f172a; }
-    .legend { position:absolute; left:14px; bottom:calc(14px + env(safe-area-inset-bottom)); padding:10px 12px; border-radius:14px; background:rgba(15,23,42,.9); font-size:12px; line-height:1.7; z-index:2; }
+    .legend { position:absolute; left:12px; bottom:calc(10px + env(safe-area-inset-bottom)); padding:9px 11px; border-radius:14px; background:rgba(15,23,42,.9); font-size:11px; line-height:1.7; z-index:2; }
     .sw { display:inline-block; width:18px; height:4px; vertical-align:middle; margin-right:7px; border-radius:4px; }
-    .node { display:inline-block; width:10px; height:10px; border-radius:50%; vertical-align:middle; margin-right:10px; background:#fde047; border:2px solid #111827; }
-    .baseline { fill:none; stroke:#64748b; stroke-width:2.2; vector-effect:non-scaling-stroke; stroke-linejoin:round; stroke-linecap:round; }
-    .c4 { fill:none; stroke:#ef4444; stroke-width:3.2; vector-effect:non-scaling-stroke; stroke-linejoin:round; stroke-linecap:round; }
+    .node { display:inline-block; width:9px; height:9px; border-radius:50%; vertical-align:middle; margin-right:9px; background:#fde047; border:2px solid #111827; }
+    .cell { stroke:#e2e8f0; stroke-width:1; vector-effect:non-scaling-stroke; fill-opacity:.38; }
+    .cell.FR { fill:#60a5fa; }
+    .cell.BE { fill:#a78bfa; }
+    .cell.LU { fill:#bef264; }
+    .baseline { fill:none; stroke:#64748b; stroke-width:2.4; vector-effect:non-scaling-stroke; stroke-linejoin:round; stroke-linecap:round; }
+    .c4 { fill:none; stroke:#ef4444; stroke-width:3.4; vector-effect:non-scaling-stroke; stroke-linejoin:round; stroke-linecap:round; }
     .candidate { fill:#fde047; stroke:#111827; stroke-width:1.4; vector-effect:non-scaling-stroke; }
-    .endpoint { fill:#f97316; }
+    .triple { fill:#f97316; }
+    .hidden { display:none; }
   </style>
 </head>
 <body>
   <div id="map"><svg id="svg"><g id="viewport"></g></svg></div>
   <div class="panel">
-    <h1>WORLD CONQUEST · C4 FRONTIER NODE CHAIN</h1>
+    <h1>WORLD CONQUEST · C4.1 FRONTIER NODE CHAIN</h1>
     <div class="sub" id="summary">Chargement…</div>
     <div class="controls" id="pairs"></div>
+    <div class="controls" id="modes"></div>
   </div>
   <div class="legend">
     <div><span class="sw" style="background:#64748b"></span>frontière réelle actuelle</div>
-    <div><span class="sw" style="background:#ef4444"></span>C4 · segments droits entre nœuds</div>
-    <div><span class="node"></span>intersection Voronoï / frontière</div>
+    <div><span class="sw" style="background:#ef4444"></span>C4 · chaîne droite entre nœuds</div>
+    <div><span class="node"></span>nœud de frontière</div>
   </div>
 <script>
 (async()=>{
-  const data = await fetch('./c4-boundary-node-chain-lab.json',{cache:'no-store'}).then(r=>r.json());
-  const svg=document.getElementById('svg'), viewport=document.getElementById('viewport'), controls=document.getElementById('pairs');
-  const NS='http://www.w3.org/2000/svg';
-  let current=data.pairs[0], transform={x:0,y:0,k:1}, drag=null;
-  const all=[];
-  data.pairs.forEach(p=>p.components.forEach(c=>c.baseline.coordinates.forEach(pt=>all.push(pt))));
-  const minX=Math.min(...all.map(p=>p[0])), maxX=Math.max(...all.map(p=>p[0])), minY=Math.min(...all.map(p=>p[1])), maxY=Math.max(...all.map(p=>p[1]));
-  const pad=.35; svg.setAttribute('viewBox',`${minX-pad} ${-(maxY+pad)} ${maxX-minX+2*pad} ${maxY-minY+2*pad}`);
-  function path(coords){return coords.length?'M '+coords.map(p=>`${p[0]} ${-p[1]}`).join(' L '):'';}
+  const [data,graph] = await Promise.all([
+    fetch('./c4-boundary-node-chain-lab.json',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('JSON C4 '+r.status);return r.json();}),
+    fetch('./voronoi-graph.json',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('graphe Voronoï '+r.status);return r.json();})
+  ]);
+  const svg=document.getElementById('svg'), viewport=document.getElementById('viewport');
+  const pairControls=document.getElementById('pairs'), modeControls=document.getElementById('modes');
+  const summary=document.getElementById('summary'), NS='http://www.w3.org/2000/svg';
+  const targetOwners=new Set(['FR','BE','LU']);
+  const cells=(graph.cells||[]).filter(c=>targetOwners.has(c.ownerCode) && c.geometry);
+  let current=data.pairs[0], mode='both', drag=null;
+
+  function addPath(coords,cls){ if(!coords||coords.length<2)return; const p=document.createElementNS(NS,'path'); p.setAttribute('d','M '+coords.map(x=>`${x[0]} ${-x[1]}`).join(' L ')); p.setAttribute('class',cls); viewport.appendChild(p); }
+  function polygonPath(rings){ return rings.map(r=>'M '+r.map(p=>`${p[0]} ${-p[1]}`).join(' L ')+' Z').join(' '); }
+  function geometryPath(g){
+    if(!g)return '';
+    if(g.type==='Polygon') return polygonPath(g.coordinates||[]);
+    if(g.type==='MultiPolygon') return (g.coordinates||[]).map(polygonPath).join(' ');
+    return '';
+  }
+  function boundsOfPair(pair){
+    const pts=[];
+    pair.components.forEach(c=>c.baseline.coordinates.forEach(p=>pts.push(p)));
+    if(!pts.length)return [0,0,1,1];
+    const xs=pts.map(p=>p[0]), ys=pts.map(p=>p[1]);
+    let minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
+    const dx=Math.max(.08,maxX-minX),dy=Math.max(.08,maxY-minY),pad=Math.max(.08,Math.max(dx,dy)*.16);
+    return [minX-pad,minY-pad,maxX+pad,maxY+pad];
+  }
+  function bboxTouchesGeometry(g,b){
+    const coords=[];
+    const collect=x=>{ if(!Array.isArray(x))return; if(typeof x[0]==='number'&&typeof x[1]==='number'){coords.push(x);return;} x.forEach(collect); };
+    collect(g.coordinates);
+    if(!coords.length)return false;
+    const xs=coords.map(p=>p[0]), ys=coords.map(p=>p[1]);
+    return !(Math.max(...xs)<b[0]||Math.min(...xs)>b[2]||Math.max(...ys)<b[1]||Math.min(...ys)>b[3]);
+  }
+  function uniqueNodes(pair){
+    const nodes=[];
+    const add=p=>{ if(!nodes.some(n=>Math.hypot(n[0]-p[0],n[1]-p[1])<1e-5))nodes.push([p[0],p[1]]); };
+    pair.components.forEach(c=>{ const q=c.baseline.coordinates; if(q.length){add(q[0]);add(q[q.length-1]);} });
+    return nodes;
+  }
+  function chainNodes(pair){
+    const nodes=uniqueNodes(pair); if(nodes.length<2)return nodes;
+    const unused=nodes.slice();
+    unused.sort((a,b)=>a[0]-b[0] || a[1]-b[1]);
+    const chain=[unused.shift()];
+    while(unused.length){
+      const last=chain[chain.length-1];
+      let best=0,bestD=Infinity;
+      for(let i=0;i<unused.length;i++){
+        const dx=(unused[i][0]-last[0])*Math.cos(last[1]*Math.PI/180),dy=unused[i][1]-last[1];
+        const d=dx*dx+dy*dy;
+        if(d<bestD){bestD=d;best=i;}
+      }
+      chain.push(unused.splice(best,1)[0]);
+    }
+    return chain;
+  }
+  function fit(){
+    const b=boundsOfPair(current); const w=b[2]-b[0],h=b[3]-b[1];
+    svg.setAttribute('viewBox',`${b[0]} ${-b[3]} ${w} ${h}`);
+  }
   function draw(){
     viewport.innerHTML='';
-    current.components.forEach(c=>{
-      const a=document.createElementNS(NS,'path'); a.setAttribute('d',path(c.baseline.coordinates)); a.setAttribute('class','baseline'); viewport.appendChild(a);
-      const b=document.createElementNS(NS,'path'); b.setAttribute('d',path(c.c4.coordinates)); b.setAttribute('class','c4'); viewport.appendChild(b);
+    const b=boundsOfPair(current);
+    cells.filter(c=>current.owners.includes(c.ownerCode)&&bboxTouchesGeometry(c.geometry,b)).forEach(c=>{
+      const p=document.createElementNS(NS,'path'); p.setAttribute('d',geometryPath(c.geometry)); p.setAttribute('class','cell '+c.ownerCode); viewport.appendChild(p);
     });
-    current.nodes.forEach(n=>{const c=document.createElementNS(NS,'circle'); c.setAttribute('cx',n.lon);c.setAttribute('cy',-n.lat);c.setAttribute('r',.025);c.setAttribute('class','candidate '+(n.source==='endpoint'?'endpoint':''));viewport.appendChild(c);});
-    document.getElementById('summary').textContent=`${current.pair} · ${current.nodes.length} nœuds · ${current.components.length} composante(s) · expérimental, aucune surface de pays modifiée`;
+    if(mode!=='c4') current.components.forEach(c=>addPath(c.baseline.coordinates,'baseline'));
+    if(mode!=='real') addPath(chainNodes(current),'c4');
+    uniqueNodes(current).forEach((n,i)=>{const c=document.createElementNS(NS,'circle');c.setAttribute('cx',n[0]);c.setAttribute('cy',-n[1]);c.setAttribute('r',.018);c.setAttribute('class','candidate '+(i===0?'triple':''));viewport.appendChild(c);});
+    const nodes=uniqueNodes(current);
+    summary.textContent=`${current.pair} · ${nodes.length} nœuds · ${current.components.length} fragments source · C4.1 expérimental`;
   }
-  data.pairs.forEach((p,i)=>{const b=document.createElement('button');b.textContent=p.pair;b.onclick=()=>{current=p;[...controls.children].forEach(x=>x.classList.remove('active'));b.classList.add('active');draw();};if(i===0)b.classList.add('active');controls.appendChild(b);});
+  function selectPair(p,button){current=p;[...pairControls.children].forEach(x=>x.classList.remove('active'));button.classList.add('active');fit();draw();}
+  data.pairs.forEach((p,i)=>{const b=document.createElement('button');b.textContent=p.pair;b.addEventListener('click',()=>selectPair(p,b));if(i===0)b.classList.add('active');pairControls.appendChild(b);});
+  [['both','Les deux'],['real','Actuelle'],['c4','C4']].forEach(([key,label],i)=>{const b=document.createElement('button');b.textContent=label;b.addEventListener('click',()=>{mode=key;[...modeControls.children].forEach(x=>x.classList.remove('active'));b.classList.add('active');draw();});if(i===0)b.classList.add('active');modeControls.appendChild(b);});
+
   let vb=svg.viewBox.baseVal;
-  function zoomAt(f,cx,cy){const pt=svg.createSVGPoint();pt.x=cx;pt.y=cy;const m=svg.getScreenCTM().inverse();const p=pt.matrixTransform(m);vb.x=p.x-(p.x-vb.x)/f;vb.y=p.y-(p.y-vb.y)/f;vb.width/=f;vb.height/=f;}
+  function zoomAt(f,cx,cy){const pt=svg.createSVGPoint();pt.x=cx;pt.y=cy;const m=svg.getScreenCTM();if(!m)return;const p=pt.matrixTransform(m.inverse());vb.x=p.x-(p.x-vb.x)/f;vb.y=p.y-(p.y-vb.y)/f;vb.width/=f;vb.height/=f;}
   svg.addEventListener('wheel',e=>{e.preventDefault();zoomAt(e.deltaY<0?1.2:1/1.2,e.clientX,e.clientY);},{passive:false});
   svg.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,vx:vb.x,vy:vb.y};svg.setPointerCapture(e.pointerId);});
   svg.addEventListener('pointermove',e=>{if(!drag)return;vb.x=drag.vx-(e.clientX-drag.x)*vb.width/svg.clientWidth;vb.y=drag.vy-(e.clientY-drag.y)*vb.height/svg.clientHeight;});
   svg.addEventListener('pointerup',()=>drag=null);
-  draw();
+  fit(); draw();
 })().catch(err=>document.getElementById('summary').textContent='Erreur: '+err.message);
 </script>
 </body>
