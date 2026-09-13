@@ -46,21 +46,24 @@ static class BoundaryNodeChainLab
             .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
+        var ownerRegions = TargetOwners.ToDictionary(
+            owner => owner,
+            owner => SafeUnion(cells
+                .Where(c => c.OwnerCode.Equals(owner, StringComparison.OrdinalIgnoreCase))
+                .Select(c => c.Geometry)),
+            StringComparer.OrdinalIgnoreCase);
+
         var pairs = new List<object>();
 
         foreach (var pairKey in pairKeys)
         {
             var (ownerA, ownerB) = SplitPair(pairKey);
-            var foreignEdges = edges
-                .Where(e => e.Foreign && PairKey(byId[e.A].OwnerCode, byId[e.B].OwnerCode)
-                    .Equals(pairKey, StringComparison.OrdinalIgnoreCase))
-                .ToArray();
 
-            var borderParts = foreignEdges
-                .SelectMany(e => SharedLinework(byId[e.A].Geometry, byId[e.B].Geometry))
+            // C4.2: rebuild the owner frontier from the union of all cells for each owner.
+            // This avoids treating every foreign cell-pair fragment as an independent border component.
+            var borderParts = SharedLinework(ownerRegions[ownerA], ownerRegions[ownerB])
                 .Where(g => !g.IsEmpty)
                 .ToArray();
-
             var borderComponents = MergeLines(borderParts);
             if (borderComponents.Count == 0)
                 continue;
@@ -68,6 +71,9 @@ static class BoundaryNodeChainLab
             var borderUnion = SafeUnion(borderComponents.Cast<Geometry>());
             var candidates = new List<Node>();
 
+            // A meaningful C4 node is now an actual topological intersection between an internal
+            // Voronoi edge of A or B and the rebuilt A-B owner frontier. No distance-based clustering
+            // of nearby border fragments is used beyond the tiny numerical duplicate tolerance.
             foreach (var edge in edges.Where(e => !e.Foreign))
             {
                 var a = byId[edge.A];
@@ -82,12 +88,10 @@ static class BoundaryNodeChainLab
                 {
                     if (line.IsEmpty || line.NumPoints < 2)
                         continue;
-                    foreach (var coordinate in new[] { line.GetCoordinateN(0), line.GetCoordinateN(line.NumPoints - 1) })
-                    {
-                        var point = Factory.CreatePoint(coordinate);
-                        if (point.Distance(borderUnion) <= NodeTolerance)
-                            AddNode(candidates, new Node(coordinate.X, coordinate.Y, a.OwnerCode));
-                    }
+
+                    var intersection = SafeIntersection(line, borderUnion);
+                    foreach (var coordinate in EnumerateIntersectionCoordinates(intersection))
+                        AddNode(candidates, new Node(coordinate.X, coordinate.Y, a.OwnerCode));
                 }
             }
 
@@ -133,7 +137,7 @@ static class BoundaryNodeChainLab
                 });
             }
 
-            Console.WriteLine($"C4 {pairKey}: {componentPayload.Count} border component(s), {allNodes.Count} ordered nodes.");
+            Console.WriteLine($"C4.2 {pairKey}: {componentPayload.Count} owner-frontier component(s), {allNodes.Count} topological nodes.");
             pairs.Add(new
             {
                 pair = pairKey,
@@ -148,7 +152,7 @@ static class BoundaryNodeChainLab
         var payload = new
         {
             status = "experimental",
-            description = "C4 boundary-node chain experiment. Internal Voronoi edges that terminate on a real owner frontier create candidate nodes; ordered nodes are connected directly by straight segments. No territory surfaces are recomposed in this lab.",
+            description = "C4.2 boundary-node chain experiment. Each owner frontier is rebuilt from the union of its Voronoi cells, then only true intersections between internal Voronoi edges and that owner frontier become nodes. Ordered nodes are connected directly by straight segments. No territory surfaces are recomposed in this lab.",
             targetOwners = TargetOwners.OrderBy(x => x).ToArray(),
             pairCount = pairs.Count,
             pairs
@@ -187,6 +191,35 @@ static class BoundaryNodeChainLab
             for (var i = 0; i < collection.NumGeometries; i++)
                 foreach (var linePart in EnumerateLines(collection.GetGeometryN(i)))
                     yield return linePart;
+        }
+    }
+
+    static IEnumerable<Coordinate> EnumerateIntersectionCoordinates(Geometry geometry)
+    {
+        if (geometry is Point point)
+        {
+            if (!point.IsEmpty)
+                yield return point.Coordinate;
+            yield break;
+        }
+
+        if (geometry is LineString line)
+        {
+            // Degenerate overlap: retain only its topological ends, not every vertex.
+            if (!line.IsEmpty && line.NumPoints > 0)
+            {
+                yield return line.GetCoordinateN(0);
+                if (line.NumPoints > 1)
+                    yield return line.GetCoordinateN(line.NumPoints - 1);
+            }
+            yield break;
+        }
+
+        if (geometry is GeometryCollection collection)
+        {
+            for (var i = 0; i < collection.NumGeometries; i++)
+                foreach (var coordinate in EnumerateIntersectionCoordinates(collection.GetGeometryN(i)))
+                    yield return coordinate;
         }
     }
 
