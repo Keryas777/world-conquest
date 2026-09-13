@@ -12,11 +12,11 @@
     "maxKm": 25,
     "formula": "min(25 km, 0.15 * sqrt(areaKm2))",
     "changedCountryCount": 39,
-    "removalCount": 237,
+    "removalCount": 236,
     "replacementCount": 25
   },
   "countryCount": 242,
-  "cityCount": 9894,
+  "cityCount": 9895,
   "initialCloseCrossBorderPairCount": 269,
   "closeCrossBorderPairCount": 3,
   "crossBorderSpacingStatus": "validated_with_microterritory_exceptions",
@@ -466,13 +466,13 @@
       "originalConflictKm": 4.28
     },
     {
-      "removedId": 202905,
-      "removedName": "Gisenyi",
-      "country": "RW",
-      "keptId": 216281,
-      "keptName": "Goma",
-      "replacementId": 384266,
-      "replacementName": "Kora",
+      "removedId": 216281,
+      "removedName": "Goma",
+      "country": "CD",
+      "keptId": 202905,
+      "keptName": "Gisenyi",
+      "replacementId": 205970,
+      "replacementName": "Sake",
       "originalConflictKm": 4.45
     },
     {
@@ -3810,7 +3810,7 @@
       "ThresholdKm": 25,
       "Before": {
         "count": 105,
-        "meanKm": 81.4,
+        "meanKm": 81.5,
         "minKm": 25.9,
         "p10Km": 32.8,
         "p25Km": 48.7,
@@ -3821,7 +3821,7 @@
       },
       "After": {
         "count": 105,
-        "meanKm": 81.4,
+        "meanKm": 81.5,
         "minKm": 25.9,
         "p10Km": 32.8,
         "p25Km": 48.7,
@@ -3876,24 +3876,24 @@
       "ThresholdKm": 25,
       "Before": {
         "count": 42,
-        "meanKm": 58.9,
+        "meanKm": 58.8,
         "minKm": 25.4,
         "p10Km": 34.6,
         "p25Km": 42.5,
         "medianKm": 62.3,
         "p75Km": 71.6,
-        "p90Km": 79.6,
+        "p90Km": 79.1,
         "maxKm": 108.4
       },
       "After": {
         "count": 42,
-        "meanKm": 58.9,
+        "meanKm": 58.8,
         "minKm": 25.4,
         "p10Km": 34.6,
         "p25Km": 42.5,
         "medianKm": 62.3,
         "p75Km": 71.6,
-        "p90Km": 79.6,
+        "p90Km": 79.1,
         "maxKm": 108.4
       },
       "FinalCount": 42,
@@ -4108,22 +4108,22 @@
       "Before": {
         "count": 107,
         "meanKm": 84,
-        "minKm": 33.2,
+        "minKm": 33.1,
         "p10Km": 58.4,
         "p25Km": 66.4,
         "medianKm": 73.6,
-        "p75Km": 82.5,
+        "p75Km": 82.4,
         "p90Km": 113,
         "maxKm": 263.1
       },
       "After": {
         "count": 107,
         "meanKm": 84,
-        "minKm": 33.2,
+        "minKm": 33.1,
         "p10Km": 58.4,
         "p25Km": 66.4,
         "medianKm": 73.6,
-        "p75Km": 82.5,
+        "p75Km": 82.4,
         "p90Km": 113,
         "maxKm": 263.1
       },
@@ -4338,24 +4338,24 @@
       "ThresholdKm": 25,
       "Before": {
         "count": 27,
-        "meanKm": 48,
+        "meanKm": 48.4,
         "minKm": 39.3,
-        "p10Km": 41,
-        "p25Km": 45.6,
-        "medianKm": 48.8,
-        "p75Km": 50.8,
-        "p90Km": 54.5,
+        "p10Km": 41.8,
+        "p25Km": 45.8,
+        "medianKm": 48.7,
+        "p75Km": 50.6,
+        "p90Km": 53.4,
         "maxKm": 59.2
       },
       "After": {
         "count": 27,
-        "meanKm": 48,
+        "meanKm": 48.4,
         "minKm": 39.3,
-        "p10Km": 41,
-        "p25Km": 45.6,
-        "medianKm": 48.8,
-        "p75Km": 50.8,
-        "p90Km": 54.5,
+        "p10Km": 41.8,
+        "p25Km": 45.8,
+        "medianKm": 48.7,
+        "p75Km": 50.6,
+        "p90Km": 53.4,
         "maxKm": 59.2
       },
       "FinalCount": 27,
@@ -8954,14 +8954,14 @@
       "ThresholdKm": 25,
       "Before": {
         "count": 15,
-        "meanKm": 32,
+        "meanKm": 34.7,
         "minKm": 24.4,
-        "p10Km": 24.4,
-        "p25Km": 24.8,
-        "medianKm": 33.2,
-        "p75Km": 37.8,
-        "p90Km": 40.9,
-        "maxKm": 42.2
+        "p10Km": 24.7,
+        "p25Km": 27.3,
+        "medianKm": 36.1,
+        "p75Km": 40.8,
+        "p90Km": 42.3,
+        "maxKm": 47.7
       },
       "After": {
         "count": 15,
@@ -8976,21 +8976,10 @@
       },
       "FinalCount": 15,
       "QuotaReduction": 0,
-      "ReplacementCount": 2,
+      "ReplacementCount": 1,
       "RemovalWithoutReplacementCount": 0,
       "RemainingPairCountBelowThreshold": 0,
       "Replacements": [
-        {
-          "removedId": 384266,
-          "removedName": "Kora",
-          "removedPopulation": 15134,
-          "keptId": 201521,
-          "keptName": "Musanze",
-          "replacementId": 202905,
-          "replacementName": "Gisenyi",
-          "replacementPopulation": 172357,
-          "originalDistanceKm": 24.4
-        },
         {
           "removedId": 201954,
           "removedName": "Mabanza",
@@ -9009,28 +8998,28 @@
       "Code": "SA",
       "ThresholdKm": 25,
       "Before": {
-        "count": 105,
-        "meanKm": 73.2,
+        "count": 106,
+        "meanKm": 72.7,
         "minKm": 25.2,
         "p10Km": 25.8,
-        "p25Km": 35.3,
+        "p25Km": 33.2,
         "medianKm": 57.1,
         "p75Km": 81.5,
-        "p90Km": 136.3,
+        "p90Km": 136.1,
         "maxKm": 552
       },
       "After": {
-        "count": 105,
-        "meanKm": 73.2,
+        "count": 106,
+        "meanKm": 72.7,
         "minKm": 25.2,
         "p10Km": 25.8,
-        "p25Km": 35.3,
+        "p25Km": 33.2,
         "medianKm": 57.1,
         "p75Km": 81.5,
-        "p90Km": 136.3,
+        "p90Km": 136.1,
         "maxKm": 552
       },
-      "FinalCount": 105,
+      "FinalCount": 106,
       "QuotaReduction": 0,
       "ReplacementCount": 0,
       "RemovalWithoutReplacementCount": 0,
@@ -10941,8 +10930,8 @@
     {
       "coefficient": 0.15,
       "rule": "min(25 km, coefficient * sqrt(areaKm2))",
-      "initialCityCount": 9894,
-      "finalCityCount": 9894,
+      "initialCityCount": 9895,
+      "finalCityCount": 9895,
       "quotaReduction": 0,
       "reducedCountryCount": 0,
       "reducedCountries": []
@@ -10950,8 +10939,8 @@
     {
       "coefficient": 0.2,
       "rule": "min(25 km, coefficient * sqrt(areaKm2))",
-      "initialCityCount": 9894,
-      "finalCityCount": 9894,
+      "initialCityCount": 9895,
+      "finalCityCount": 9895,
       "quotaReduction": 0,
       "reducedCountryCount": 0,
       "reducedCountries": []
@@ -10959,8 +10948,8 @@
     {
       "coefficient": 0.25,
       "rule": "min(25 km, coefficient * sqrt(areaKm2))",
-      "initialCityCount": 9894,
-      "finalCityCount": 9893,
+      "initialCityCount": 9895,
+      "finalCityCount": 9894,
       "quotaReduction": 1,
       "reducedCountryCount": 1,
       "reducedCountries": [
@@ -10976,8 +10965,8 @@
     }
   ],
   "adaptive25KmSummary": {
-    "initialCityCount": 9894,
-    "finalCityCount": 9883,
+    "initialCityCount": 9895,
+    "finalCityCount": 9884,
     "quotaReduction": 11,
     "reducedCountryCount": 8,
     "reducedCountries": [
@@ -11435,7 +11424,7 @@
       "population": 84068091,
       "quota": 118,
       "selected": 105,
-      "nearestMeanKm": 81.4,
+      "nearestMeanKm": 81.5,
       "nearestMinKm": 25.9,
       "nearestMaxKm": 223.5
     },
@@ -11457,7 +11446,7 @@
       "population": 5244363,
       "quota": 42,
       "selected": 42,
-      "nearestMeanKm": 58.9,
+      "nearestMeanKm": 58.8,
       "nearestMinKm": 25.4,
       "nearestMaxKm": 108.4
     },
@@ -11535,7 +11524,7 @@
       "quota": 107,
       "selected": 107,
       "nearestMeanKm": 84,
-      "nearestMinKm": 33.2,
+      "nearestMinKm": 33.1,
       "nearestMaxKm": 263.1
     },
     {
@@ -11611,7 +11600,7 @@
       "population": 10625695,
       "quota": 27,
       "selected": 27,
-      "nearestMeanKm": 48,
+      "nearestMeanKm": 48.4,
       "nearestMinKm": 39.3,
       "nearestMaxKm": 59.2
     },
@@ -13074,9 +13063,9 @@
       "population": 12301939,
       "quota": 18,
       "selected": 15,
-      "nearestMeanKm": 32,
+      "nearestMeanKm": 34.7,
       "nearestMinKm": 24.4,
-      "nearestMaxKm": 42.2
+      "nearestMaxKm": 47.7
     },
     {
       "code": "SA",
@@ -13084,8 +13073,8 @@
       "areaKm2": 1960582,
       "population": 33699947,
       "quota": 123,
-      "selected": 105,
-      "nearestMeanKm": 73.2,
+      "selected": 106,
+      "nearestMeanKm": 72.7,
       "nearestMinKm": 25.2,
       "nearestMaxKm": 552
     },
