@@ -46,6 +46,7 @@ static class BoundaryNodeChainLab
             .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
+        // Kept only as the real/current reference frontier for the comparison viewer.
         var ownerRegions = TargetOwners.ToDictionary(
             owner => owner,
             owner => SafeUnion(cells
@@ -59,40 +60,39 @@ static class BoundaryNodeChainLab
         {
             var (ownerA, ownerB) = SplitPair(pairKey);
 
-            // C4.2: rebuild the owner frontier from the union of all cells for each owner.
-            // This avoids treating every foreign cell-pair fragment as an independent border component.
-            var borderParts = SharedLinework(ownerRegions[ownerA], ownerRegions[ownerB])
+            var realBorderParts = SharedLinework(ownerRegions[ownerA], ownerRegions[ownerB])
                 .Where(g => !g.IsEmpty)
                 .ToArray();
-            var borderComponents = MergeLines(borderParts);
+            var borderComponents = MergeLines(realBorderParts);
             if (borderComponents.Count == 0)
                 continue;
 
-            var borderUnion = SafeUnion(borderComponents.Cast<Geometry>());
-            var candidates = new List<Node>();
+            // C4.3: do not infer nodes by intersecting internal edges with a rebuilt owner border.
+            // The Voronoi graph already identifies every edge whose two cells have different owners.
+            // For this A-B pair, those foreign edges are the cellular frontier. Their topological
+            // endpoints/junctions are the only candidate nodes used by the straight-node chain.
+            var foreignEdges = edges
+                .Where(e => e.Foreign && PairKey(byId[e.A].OwnerCode, byId[e.B].OwnerCode)
+                    .Equals(pairKey, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
 
-            // A meaningful C4 node is now an actual topological intersection between an internal
-            // Voronoi edge of A or B and the rebuilt A-B owner frontier. No distance-based clustering
-            // of nearby border fragments is used beyond the tiny numerical duplicate tolerance.
-            foreach (var edge in edges.Where(e => !e.Foreign))
+            var foreignLinework = foreignEdges
+                .SelectMany(e => SharedLinework(byId[e.A].Geometry, byId[e.B].Geometry))
+                .Where(line => !line.IsEmpty && line.NumPoints >= 2)
+                .ToArray();
+
+            var foreignComponents = MergeLines(foreignLinework);
+            var graphNodes = new List<Node>();
+            foreach (var line in foreignLinework)
             {
-                var a = byId[edge.A];
-                var b = byId[edge.B];
-                if (!a.OwnerCode.Equals(b.OwnerCode, StringComparison.OrdinalIgnoreCase))
-                    continue;
-                if (!a.OwnerCode.Equals(ownerA, StringComparison.OrdinalIgnoreCase) &&
-                    !a.OwnerCode.Equals(ownerB, StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                foreach (var line in SharedLinework(a.Geometry, b.Geometry))
-                {
-                    if (line.IsEmpty || line.NumPoints < 2)
-                        continue;
-
-                    var intersection = SafeIntersection(line, borderUnion);
-                    foreach (var coordinate in EnumerateIntersectionCoordinates(intersection))
-                        AddNode(candidates, new Node(coordinate.X, coordinate.Y, a.OwnerCode));
-                }
+                AddNode(graphNodes, new Node(
+                    line.GetCoordinateN(0).X,
+                    line.GetCoordinateN(0).Y,
+                    "foreign-edge-vertex"));
+                AddNode(graphNodes, new Node(
+                    line.GetCoordinateN(line.NumPoints - 1).X,
+                    line.GetCoordinateN(line.NumPoints - 1).Y,
+                    "foreign-edge-vertex"));
             }
 
             var componentPayload = new List<object>();
@@ -101,14 +101,16 @@ static class BoundaryNodeChainLab
 
             foreach (var baseline in borderComponents)
             {
-                var componentNodes = candidates
+                var componentNodes = graphNodes
                     .Where(n => Factory.CreatePoint(new Coordinate(n.Lon, n.Lat)).Distance(baseline) <= NodeTolerance)
                     .ToList();
 
+                // Endpoints are anchors of the real A-B frontier. They are added only when the graph
+                // does not already provide the same coordinate, and are explicitly tagged as anchors.
                 var start = baseline.GetCoordinateN(0);
                 var end = baseline.GetCoordinateN(baseline.NumPoints - 1);
-                AddNode(componentNodes, new Node(start.X, start.Y, "endpoint"));
-                AddNode(componentNodes, new Node(end.X, end.Y, "endpoint"));
+                AddNode(componentNodes, new Node(start.X, start.Y, "anchor"));
+                AddNode(componentNodes, new Node(end.X, end.Y, "anchor"));
 
                 var ordered = componentNodes
                     .Select(n => new { Node = n, Position = ProjectPosition(baseline, new Coordinate(n.Lon, n.Lat)) })
@@ -125,7 +127,13 @@ static class BoundaryNodeChainLab
                 allC4Lines.Add(c4);
 
                 foreach (var item in ordered)
-                    allNodes.Add(new { lon = item.Node.Lon, lat = item.Node.Lat, source = item.Node.Source, position = item.Position });
+                    allNodes.Add(new
+                    {
+                        lon = item.Node.Lon,
+                        lat = item.Node.Lat,
+                        source = item.Node.Source,
+                        position = item.Position
+                    });
 
                 componentPayload.Add(new
                 {
@@ -137,14 +145,22 @@ static class BoundaryNodeChainLab
                 });
             }
 
-            Console.WriteLine($"C4.2 {pairKey}: {componentPayload.Count} owner-frontier component(s), {allNodes.Count} topological nodes.");
+            Console.WriteLine(
+                $"C4.3 {pairKey}: {foreignEdges.Length} foreign graph edge(s), " +
+                $"{foreignComponents.Count} graph component(s), {graphNodes.Count} graph node(s), " +
+                $"{borderComponents.Count} real-border component(s).");
+
             pairs.Add(new
             {
                 pair = pairKey,
                 owners = new[] { ownerA, ownerB },
+                foreignEdgeCount = foreignEdges.Length,
+                graphComponentCount = foreignComponents.Count,
+                graphNodeCount = graphNodes.Count,
                 components = componentPayload,
                 nodes = allNodes,
                 baseline = MultiLineToGeoJson(borderComponents),
+                graphFrontier = MultiLineToGeoJson(foreignComponents),
                 c4 = MultiLineToGeoJson(allC4Lines)
             });
         }
@@ -152,7 +168,7 @@ static class BoundaryNodeChainLab
         var payload = new
         {
             status = "experimental",
-            description = "C4.2 boundary-node chain experiment. Each owner frontier is rebuilt from the union of its Voronoi cells, then only true intersections between internal Voronoi edges and that owner frontier become nodes. Ordered nodes are connected directly by straight segments. No territory surfaces are recomposed in this lab.",
+            description = "C4.3 boundary-node chain experiment. Foreign Voronoi edges (edges between cells with different owners) directly define the cellular frontier graph. Only their topological endpoints/junctions, plus missing real-frontier anchors, become chain nodes. No territory surfaces are recomposed in this lab.",
             targetOwners = TargetOwners.OrderBy(x => x).ToArray(),
             pairCount = pairs.Count,
             pairs
@@ -194,41 +210,17 @@ static class BoundaryNodeChainLab
         }
     }
 
-    static IEnumerable<Coordinate> EnumerateIntersectionCoordinates(Geometry geometry)
-    {
-        if (geometry is Point point)
-        {
-            if (!point.IsEmpty)
-                yield return point.Coordinate;
-            yield break;
-        }
-
-        if (geometry is LineString line)
-        {
-            // Degenerate overlap: retain only its topological ends, not every vertex.
-            if (!line.IsEmpty && line.NumPoints > 0)
-            {
-                yield return line.GetCoordinateN(0);
-                if (line.NumPoints > 1)
-                    yield return line.GetCoordinateN(line.NumPoints - 1);
-            }
-            yield break;
-        }
-
-        if (geometry is GeometryCollection collection)
-        {
-            for (var i = 0; i < collection.NumGeometries; i++)
-                foreach (var coordinate in EnumerateIntersectionCoordinates(collection.GetGeometryN(i)))
-                    yield return coordinate;
-        }
-    }
-
     static void AddNode(List<Node> nodes, Node candidate)
     {
         var existing = nodes.FindIndex(n => Distance(n, candidate) <= NodeTolerance);
         if (existing < 0)
+        {
             nodes.Add(candidate);
-        else if (nodes[existing].Source == "endpoint" && candidate.Source != "endpoint")
+            return;
+        }
+
+        // Prefer an actual foreign-edge vertex over a synthetic anchor at the same coordinate.
+        if (nodes[existing].Source == "anchor" && candidate.Source != "anchor")
             nodes[existing] = candidate;
     }
 
