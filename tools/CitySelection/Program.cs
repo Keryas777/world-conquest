@@ -120,6 +120,7 @@ static class Program
         await VoronoiLab.GenerateWorldAsync(http,outDir,worldSelection,.60);
         await HybridFrontierLab.GenerateAsync(outDir);
         await AdaptiveHybridFrontierLab.GenerateAsync(outDir);
+        await BoundaryNodeChainLab.GenerateAsync(outDir);
         Console.WriteLine($"Outputs written to {outDir}");
     }
 }
