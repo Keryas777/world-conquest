@@ -61,7 +61,7 @@ static class BoundaryNodeChainLab
             var (ownerA, ownerB) = SplitPair(pairKey);
 
             // The current real A-B border is the reference line. C4.5 does not derive a border
-            // from foreign Voronoi edges. It only asks where INTERNAL Voronoi edges terminate on
+            // from foreign Voronoi edges. It only asks where INTERNAL Voronoi edges intersect
             // this real border — exactly the junctions visible in the Territory Lab.
             var borderComponents = MergeLines(
                 SharedLinework(ownerRegions[ownerA], ownerRegions[ownerB])
@@ -89,8 +89,7 @@ static class BoundaryNodeChainLab
                         continue;
 
                     internalEdgeCount++;
-                    AddEndpointIfOnBorder(line.GetCoordinateN(0), a.OwnerCode, borderUnion, junctions);
-                    AddEndpointIfOnBorder(line.GetCoordinateN(line.NumPoints - 1), a.OwnerCode, borderUnion, junctions);
+                    AddIntersectionsWithBorder(line, a.OwnerCode, borderUnion, junctions);
                 }
             }
 
@@ -175,7 +174,7 @@ static class BoundaryNodeChainLab
         var payload = new
         {
             status = "experimental",
-            description = "C4.5 boundary-node chain experiment. Nodes are only junctions where an internal Voronoi edge of either adjacent owner terminates on the current real A-B border. Those junctions are ordered along the real border and connected by straight segments; real-border endpoints are anchors only. No territory surfaces are recomposed.",
+            description = "C4.5 boundary-node chain experiment. Nodes are only geometric intersections where an internal Voronoi edge of either adjacent owner crosses the current real A-B border. Those junctions are ordered along the real border and connected by straight segments; real-border endpoints are anchors only. No territory surfaces are recomposed.",
             targetOwners = TargetOwners.OrderBy(x => x).ToArray(),
             pairCount = pairs.Count,
             pairs
@@ -186,17 +185,45 @@ static class BoundaryNodeChainLab
             JsonSerializer.Serialize(payload));
     }
 
-    static void AddEndpointIfOnBorder(
-        Coordinate coordinate,
+    static void AddIntersectionsWithBorder(
+        LineString line,
         string owner,
         Geometry border,
         List<Node> nodes)
     {
-        var point = Factory.CreatePoint(coordinate);
-        if (point.Distance(border) > NodeTolerance)
-            return;
+        var intersection = SafeIntersection(line, border);
+        foreach (var coordinate in EnumerateIntersectionCoordinates(intersection))
+            AddNode(nodes, new Node(coordinate.X, coordinate.Y, $"junction-{owner}"));
+    }
 
-        AddNode(nodes, new Node(coordinate.X, coordinate.Y, $"junction-{owner}"));
+    static IEnumerable<Coordinate> EnumerateIntersectionCoordinates(Geometry geometry)
+    {
+        if (geometry.IsEmpty)
+            yield break;
+
+        if (geometry is Point point)
+        {
+            yield return point.Coordinate;
+            yield break;
+        }
+
+        // A collinear overlap is not the normal C4.5 case, but if clipping makes an internal
+        // Voronoi edge coincide with the real border, keep only the overlap endpoints as junctions.
+        if (geometry is LineString line)
+        {
+            if (line.NumPoints > 0)
+                yield return line.GetCoordinateN(0);
+            if (line.NumPoints > 1)
+                yield return line.GetCoordinateN(line.NumPoints - 1);
+            yield break;
+        }
+
+        if (geometry is GeometryCollection collection)
+        {
+            for (var i = 0; i < collection.NumGeometries; i++)
+                foreach (var coordinate in EnumerateIntersectionCoordinates(collection.GetGeometryN(i)))
+                    yield return coordinate;
+        }
     }
 
     static List<LineString> MergeLines(IEnumerable<LineString> lines)
