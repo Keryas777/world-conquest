@@ -41,9 +41,9 @@ jobs:
         run: |
           c4_only=false
           frontier_only=false
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          if [[ "${{ github.event_name }}" == "pull_request" || "${{ github.event_name }}" == "push" ]]; then
             changed="$(git diff --name-only HEAD^ HEAD)"
-            echo "Changed in pull request:"
+            echo "Changed in ${{ github.event_name }}:"
             echo "$changed"
             if [[ -n "$changed" ]] && ! echo "$changed" | grep -Ev '^(tools/CitySelection/(BoundaryNodeChainLab|Program)\.cs|docs/c4-boundary-node-chain-lab\.html|\.github/workflows/city-selection-lab\.yml)$' >/dev/null; then
               c4_only=true
@@ -88,8 +88,34 @@ jobs:
           name: frontier-preview
           path: data/generated/frontier-preview/
           if-no-files-found: error
+      - name: Publish generated C4 lab to docs
+        if: github.event_name != 'pull_request' && steps.scope.outputs.c4_only == 'true'
+        run: |
+          cp data/generated/city-selection/c4-boundary-node-chain-lab.json docs/c4-boundary-node-chain-lab.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/c4-boundary-node-chain-lab.json
+          if git diff --cached --quiet; then
+            echo "No generated C4 changes to publish."
+          else
+            git commit -m "Update generated C4 frontier lab"
+            git push
+          fi
+      - name: Publish generated hybrid frontier lab to docs
+        if: github.event_name != 'pull_request' && steps.scope.outputs.c4_only != 'true' && steps.scope.outputs.frontier_only == 'true'
+        run: |
+          cp data/generated/city-selection/hybrid-frontier-lab.json docs/hybrid-frontier-lab.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/hybrid-frontier-lab.json
+          if git diff --cached --quiet; then
+            echo "No generated hybrid frontier changes to publish."
+          else
+            git commit -m "Update generated hybrid frontier lab"
+            git push
+          fi
       - name: Publish generated frontier viewer to docs
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && steps.scope.outputs.c4_only != 'true' && steps.scope.outputs.frontier_only != 'true'
         run: |
           cp data/generated/city-selection/frontiers.html docs/frontiers.html
           cp data/generated/city-selection/frontier-graph.json docs/frontier-graph.json
