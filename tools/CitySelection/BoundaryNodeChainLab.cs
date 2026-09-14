@@ -1,13 +1,12 @@
 using System.Text.Json;
 using NetTopologySuite.Geometries;
 using NetTopologySuite.Operation.Linemerge;
-using NetTopologySuite.Operation.Overlay;
 using NetTopologySuite.Operation.OverlayNG;
 
 static class BoundaryNodeChainLab
 {
     sealed record Cell(long Id, string OwnerCode, Geometry Geometry);
-    sealed record Node(double Lon, double Lat, string Source, string OwnerCode);
+    sealed record Node(double Lon, double Lat, string Source, string Detail);
 
     static readonly GeometryFactory Factory =
         NetTopologySuite.NtsGeometryServices.Instance.CreateGeometryFactory(srid: 4326);
@@ -20,41 +19,70 @@ static class BoundaryNodeChainLab
         using var document = JsonDocument.Parse(await File.ReadAllTextAsync(graphPath));
         var cells = document.RootElement.GetProperty("cells").EnumerateArray().Select(ParseCell).ToArray();
 
-        // C4.7: test Jérôme's intended rule on the problematic BE-LU border.
-        // Nodes = the two real border endpoints + intersections where an INTERNAL
-        // Voronoi edge (between two cells of the same owner) reaches that border.
+        // C4.8: identify topological Voronoi vertices directly from the cell polygons.
+        // A useful border junction is a single coordinate shared by at least three cells,
+        // with both BE and LU represented (for example BE+BE+LU or BE+LU+LU).
+        // This is the topological event "same-owner internal Voronoi edge reaches the
+        // international border" without relying on fragile line-line intersections.
         const string ownerA = "BE";
         const string ownerB = "LU";
         const string pairKey = "BE-LU";
 
-        var cellsA = cells.Where(c => c.OwnerCode == ownerA).ToArray();
-        var cellsB = cells.Where(c => c.OwnerCode == ownerB).ToArray();
-        var regionA = SafeUnion(cellsA.Select(c => c.Geometry));
-        var regionB = SafeUnion(cellsB.Select(c => c.Geometry));
-
-        var borderComponents = MergeLines(SharedLinework(regionA, regionB));
+        var pairCells = cells.Where(c => c.OwnerCode == ownerA || c.OwnerCode == ownerB).ToArray();
+        var regionA = SafeUnion(pairCells.Where(c => c.OwnerCode == ownerA).Select(c => c.Geometry));
+        var regionB = SafeUnion(pairCells.Where(c => c.OwnerCode == ownerB).Select(c => c.Geometry));
+        var borderComponents = MergeLines(EnumerateLines(SafeIntersection(regionA.Boundary, regionB.Boundary)));
         if (borderComponents.Count == 0)
-            throw new InvalidOperationException("C4.7: no BE-LU border component found.");
+            throw new InvalidOperationException("C4.8: no BE-LU border component found.");
 
         var borderUnion = SafeUnion(borderComponents.Cast<Geometry>());
-        var internalEdges = BuildInternalEdges(cellsA)
-            .Concat(BuildInternalEdges(cellsB))
-            .ToArray();
+        var buckets = new Dictionary<string, VertexBucket>(StringComparer.Ordinal);
+
+        foreach (var cell in pairCells)
+        {
+            foreach (var coordinate in EnumerateVertices(cell.Geometry))
+            {
+                var key = NodeKey(coordinate.X, coordinate.Y);
+                if (!buckets.TryGetValue(key, out var bucket))
+                {
+                    bucket = new VertexBucket(coordinate.X, coordinate.Y);
+                    buckets.Add(key, bucket);
+                }
+                bucket.CellOwners[cell.Id] = cell.OwnerCode;
+            }
+        }
 
         var nodes = new List<Node>();
-        foreach (var edge in internalEdges)
+        var mixedCandidates = 0;
+        foreach (var bucket in buckets.Values)
         {
-            var hit = SafeIntersection(edge.Line, borderUnion);
-            foreach (var coordinate in EnumerateIntersectionPoints(hit))
-                AddNode(nodes, new Node(coordinate.X, coordinate.Y, "junction", edge.OwnerCode));
+            var owners = bucket.CellOwners.Values.ToArray();
+            if (owners.Length < 3)
+                continue;
+
+            var beCount = owners.Count(x => x == ownerA);
+            var luCount = owners.Count(x => x == ownerB);
+            if (beCount == 0 || luCount == 0)
+                continue;
+            if (Math.Max(beCount, luCount) < 2)
+                continue;
+
+            mixedCandidates++;
+            var point = Factory.CreatePoint(new Coordinate(bucket.Lon, bucket.Lat));
+            if (point.Distance(borderUnion) > NodeTolerance)
+                continue;
+
+            AddNode(nodes, new Node(
+                bucket.Lon,
+                bucket.Lat,
+                "junction",
+                $"{ownerA}:{beCount} {ownerB}:{luCount}"));
         }
 
         var (anchorA, anchorB) = FindOuterAnchors(borderComponents);
         AddOrPromoteAnchor(nodes, anchorA);
         AddOrPromoteAnchor(nodes, anchorB);
 
-        // Order only for this visual experiment: project on the axis joining the
-        // two true endpoints. This does not modify territory geometry.
         var ordered = nodes
             .OrderBy(n => AxisPosition(anchorA, anchorB, new Coordinate(n.Lon, n.Lat)))
             .ToArray();
@@ -63,13 +91,13 @@ static class BoundaryNodeChainLab
         var junctionCount = ordered.Count(n => n.Source == "junction");
 
         Console.WriteLine(
-            $"C4.7 {pairKey}: {junctionCount} internal-edge junction(s) + 2 anchor(s), " +
-            $"{internalEdges.Length} internal Voronoi edge(s), {borderComponents.Count} real-border component(s).");
+            $"C4.8 {pairKey}: {junctionCount} mixed Voronoi vertex/vertices + 2 anchor(s), " +
+            $"{mixedCandidates} mixed topological candidate(s), {borderComponents.Count} real-border component(s).");
 
         var payload = new
         {
             status = "experimental",
-            description = "C4.7 BE-LU experiment. Nodes are only the two outer real-border endpoints plus intersections where same-owner internal Voronoi edges meet the BE-LU border. No territory surface is modified.",
+            description = "C4.8 BE-LU experiment. Useful junctions are topological Voronoi vertices shared by at least three cells with both BE and LU represented (BE+BE+LU or BE+LU+LU), plus the two outer real-border endpoints. No territory surface is modified.",
             targetOwners = new[] { ownerA, ownerB },
             pairCount = 1,
             pairs = new[]
@@ -81,7 +109,7 @@ static class BoundaryNodeChainLab
                     junctionCount,
                     anchorCount = 2,
                     nodeCount = ordered.Length,
-                    internalEdgeCount = internalEdges.Length,
+                    mixedCandidateCount = mixedCandidates,
                     realBorderComponentCount = borderComponents.Count,
                     components = borderComponents.Select(line => new
                     {
@@ -93,7 +121,7 @@ static class BoundaryNodeChainLab
                         lon = n.Lon,
                         lat = n.Lat,
                         source = n.Source,
-                        owner = n.OwnerCode
+                        detail = n.Detail
                     }).ToArray(),
                     baseline = MultiLineToGeoJson(borderComponents),
                     c4 = LineToGeoJson(chain)
@@ -106,55 +134,50 @@ static class BoundaryNodeChainLab
             JsonSerializer.Serialize(payload));
     }
 
-    sealed record InternalEdge(string OwnerCode, LineString Line);
-
-    static IEnumerable<InternalEdge> BuildInternalEdges(IReadOnlyList<Cell> ownerCells)
+    sealed class VertexBucket
     {
-        for (var i = 0; i < ownerCells.Count; i++)
+        public VertexBucket(double lon, double lat)
         {
-            for (var j = i + 1; j < ownerCells.Count; j++)
-            {
-                var a = ownerCells[i];
-                var b = ownerCells[j];
-                if (!a.Geometry.EnvelopeInternal.Intersects(b.Geometry.EnvelopeInternal))
-                    continue;
-
-                var shared = SafeIntersection(a.Geometry.Boundary, b.Geometry.Boundary);
-                foreach (var line in EnumerateLines(shared))
-                    if (!line.IsEmpty && line.Length > NodeTolerance)
-                        yield return new InternalEdge(a.OwnerCode, line);
-            }
+            Lon = lon;
+            Lat = lat;
         }
+
+        public double Lon { get; }
+        public double Lat { get; }
+        public Dictionary<long, string> CellOwners { get; } = new();
     }
 
-    static IEnumerable<Coordinate> EnumerateIntersectionPoints(Geometry geometry)
+    static IEnumerable<Coordinate> EnumerateVertices(Geometry geometry)
     {
         if (geometry.IsEmpty)
             yield break;
 
-        if (geometry is Point point)
+        if (geometry is Polygon polygon)
         {
-            yield return point.Coordinate;
-            yield break;
-        }
-
-        // Defensive fallback for the unlikely case of a tiny overlap caused by
-        // numerical precision: keep only the overlap endpoints as candidate junctions.
-        if (geometry is LineString line)
-        {
-            if (line.NumPoints > 0)
-                yield return line.GetCoordinateN(0);
-            if (line.NumPoints > 1)
-                yield return line.GetCoordinateN(line.NumPoints - 1);
+            foreach (var c in EnumerateRingVertices(polygon.ExteriorRing))
+                yield return c;
+            for (var i = 0; i < polygon.NumInteriorRings; i++)
+                foreach (var c in EnumerateRingVertices(polygon.GetInteriorRingN(i)))
+                    yield return c;
             yield break;
         }
 
         if (geometry is GeometryCollection collection)
         {
             for (var i = 0; i < collection.NumGeometries; i++)
-                foreach (var coordinate in EnumerateIntersectionPoints(collection.GetGeometryN(i)))
-                    yield return coordinate;
+                foreach (var c in EnumerateVertices(collection.GetGeometryN(i)))
+                    yield return c;
         }
+    }
+
+    static IEnumerable<Coordinate> EnumerateRingVertices(LineString ring)
+    {
+        var coordinates = ring.Coordinates;
+        var count = coordinates.Length;
+        if (count > 1 && coordinates[0].Equals2D(coordinates[^1]))
+            count--;
+        for (var i = 0; i < count; i++)
+            yield return coordinates[i];
     }
 
     static (Coordinate A, Coordinate B) FindOuterAnchors(IReadOnlyList<LineString> borderComponents)
@@ -168,7 +191,7 @@ static class BoundaryNodeChainLab
             .ToArray();
 
         if (endpoints.Length < 2)
-            throw new InvalidOperationException("C4.7: border has fewer than two endpoints.");
+            throw new InvalidOperationException("C4.8: border has fewer than two endpoints.");
 
         var bestA = endpoints[0];
         var bestB = endpoints[1];
@@ -191,10 +214,10 @@ static class BoundaryNodeChainLab
         var index = nodes.FindIndex(n => Distance(n.Lon, n.Lat, anchor.X, anchor.Y) <= NodeTolerance);
         if (index >= 0)
         {
-            nodes[index] = new Node(anchor.X, anchor.Y, "anchor", nodes[index].OwnerCode);
+            nodes[index] = new Node(anchor.X, anchor.Y, "anchor", "real-border endpoint");
             return;
         }
-        nodes.Add(new Node(anchor.X, anchor.Y, "anchor", "real-border"));
+        nodes.Add(new Node(anchor.X, anchor.Y, "anchor", "real-border endpoint"));
     }
 
     static void AddNode(List<Node> nodes, Node candidate)
@@ -203,6 +226,9 @@ static class BoundaryNodeChainLab
             return;
         nodes.Add(candidate);
     }
+
+    static string NodeKey(double lon, double lat) =>
+        $"{Math.Round(lon, 5):F5},{Math.Round(lat, 5):F5}";
 
     static double AxisPosition(Coordinate start, Coordinate end, Coordinate point)
     {
@@ -230,9 +256,6 @@ static class BoundaryNodeChainLab
         return merger.GetMergedLineStrings().Cast<LineString>().OrderByDescending(x => x.Length).ToList();
     }
 
-    static IEnumerable<LineString> SharedLinework(Geometry a, Geometry b) =>
-        EnumerateLines(SafeIntersection(a.Boundary, b.Boundary));
-
     static IEnumerable<LineString> EnumerateLines(Geometry geometry)
     {
         if (geometry is LineString line)
@@ -252,7 +275,7 @@ static class BoundaryNodeChainLab
     {
         if (a.IsEmpty || b.IsEmpty) return Factory.CreateGeometryCollection();
         try { return a.Intersection(b); }
-        catch { return OverlayNGRobust.Overlay(a, b, SpatialFunction.Intersection); }
+        catch { return OverlayNGRobust.Overlay(a, b, NetTopologySuite.Operation.Overlay.SpatialFunction.Intersection); }
     }
 
     static Geometry SafeUnion(IEnumerable<Geometry> geometries)
