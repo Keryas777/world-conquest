@@ -9971,22 +9971,22 @@
       "ThresholdKm": 25,
       "Before": {
         "count": 50,
-        "meanKm": 56.3,
+        "meanKm": 57,
         "minKm": 25.4,
         "p10Km": 29.8,
         "p25Km": 39.6,
-        "medianKm": 45.8,
+        "medianKm": 49.1,
         "p75Km": 69,
         "p90Km": 91.3,
         "maxKm": 171.8
       },
       "After": {
         "count": 50,
-        "meanKm": 56.3,
+        "meanKm": 57,
         "minKm": 25.4,
         "p10Km": 29.8,
         "p25Km": 39.6,
-        "medianKm": 45.8,
+        "medianKm": 49.1,
         "p75Km": 69,
         "p90Km": 91.3,
         "maxKm": 171.8
@@ -13382,7 +13382,7 @@
       "population": 5850908,
       "quota": 50,
       "selected": 50,
-      "nearestMeanKm": 56.3,
+      "nearestMeanKm": 57,
       "nearestMinKm": 25.4,
       "nearestMaxKm": 171.8
     },
