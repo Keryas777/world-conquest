@@ -16,6 +16,7 @@ static class BoundaryNodeChainLab
     static readonly HashSet<string> TargetOwners =
         new(StringComparer.OrdinalIgnoreCase) { "FR", "BE", "LU" };
 
+    // Numerical tolerance only: used to match coordinates generated from the same clipped topology.
     const double NodeTolerance = 1e-5;
 
     public static async Task GenerateAsync(string outDir)
@@ -46,7 +47,6 @@ static class BoundaryNodeChainLab
             .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        // Kept only as the real/current reference frontier for the comparison viewer.
         var ownerRegions = TargetOwners.ToDictionary(
             owner => owner,
             owner => SafeUnion(cells
@@ -60,73 +60,78 @@ static class BoundaryNodeChainLab
         {
             var (ownerA, ownerB) = SplitPair(pairKey);
 
-            var realBorderParts = SharedLinework(ownerRegions[ownerA], ownerRegions[ownerB])
-                .Where(g => !g.IsEmpty)
-                .ToArray();
-            var borderComponents = MergeLines(realBorderParts);
+            // The current real A-B border is the reference line. C4.5 does not derive a border
+            // from foreign Voronoi edges. It only asks where INTERNAL Voronoi edges terminate on
+            // this real border — exactly the junctions visible in the Territory Lab.
+            var borderComponents = MergeLines(
+                SharedLinework(ownerRegions[ownerA], ownerRegions[ownerB])
+                    .Where(line => !line.IsEmpty));
             if (borderComponents.Count == 0)
                 continue;
 
-            var foreignEdges = edges
-                .Where(e => e.Foreign && PairKey(byId[e.A].OwnerCode, byId[e.B].OwnerCode)
-                    .Equals(pairKey, StringComparison.OrdinalIgnoreCase))
-                .ToArray();
+            var borderUnion = SafeUnion(borderComponents.Cast<Geometry>());
+            var junctions = new List<Node>();
+            var internalEdgeCount = 0;
 
-            // C4.4: each graph Edge is a logical Voronoi adjacency, even if its geometry is
-            // represented by many vertices or several tiny line fragments after clipping.
-            // Collapse every logical edge to exactly two topological endpoints. Intermediate
-            // geometry vertices remain useful for drawing, but are no longer promoted to nodes.
-            var logicalEdgeLines = new List<LineString>();
-            var graphNodes = new List<Node>();
-
-            foreach (var edge in foreignEdges)
+            foreach (var edge in edges.Where(e => !e.Foreign))
             {
-                var parts = SharedLinework(byId[edge.A].Geometry, byId[edge.B].Geometry)
-                    .Where(line => !line.IsEmpty && line.NumPoints >= 2)
-                    .ToArray();
-
-                var logical = LogicalEdgeLine(parts);
-                if (logical is null)
+                var a = byId[edge.A];
+                var b = byId[edge.B];
+                if (!a.OwnerCode.Equals(b.OwnerCode, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (!a.OwnerCode.Equals(ownerA, StringComparison.OrdinalIgnoreCase) &&
+                    !a.OwnerCode.Equals(ownerB, StringComparison.OrdinalIgnoreCase))
                     continue;
 
-                logicalEdgeLines.Add(logical);
-                var start = logical.GetCoordinateN(0);
-                var end = logical.GetCoordinateN(logical.NumPoints - 1);
-                AddNode(graphNodes, new Node(start.X, start.Y, "logical-edge-endpoint"));
-                AddNode(graphNodes, new Node(end.X, end.Y, "logical-edge-endpoint"));
+                foreach (var line in SharedLinework(a.Geometry, b.Geometry))
+                {
+                    if (line.IsEmpty || line.NumPoints < 2)
+                        continue;
+
+                    internalEdgeCount++;
+                    AddEndpointIfOnBorder(line.GetCoordinateN(0), a.OwnerCode, borderUnion, junctions);
+                    AddEndpointIfOnBorder(line.GetCoordinateN(line.NumPoints - 1), a.OwnerCode, borderUnion, junctions);
+                }
             }
 
-            var graphComponents = MergeLines(logicalEdgeLines);
             var componentPayload = new List<object>();
             var allC4Lines = new List<LineString>();
             var allNodes = new List<object>();
+            var usedJunctionKeys = new HashSet<string>(StringComparer.Ordinal);
 
             foreach (var baseline in borderComponents)
             {
-                var componentNodes = graphNodes
+                var componentNodes = junctions
                     .Where(n => Factory.CreatePoint(new Coordinate(n.Lon, n.Lat)).Distance(baseline) <= NodeTolerance)
                     .ToList();
 
+                // The real border endpoints only close the chain. They are visually distinguished
+                // from actual Voronoi/border junctions.
                 var start = baseline.GetCoordinateN(0);
                 var end = baseline.GetCoordinateN(baseline.NumPoints - 1);
                 AddNode(componentNodes, new Node(start.X, start.Y, "anchor"));
                 AddNode(componentNodes, new Node(end.X, end.Y, "anchor"));
 
                 var ordered = componentNodes
-                    .Select(n => new { Node = n, Position = ProjectPosition(baseline, new Coordinate(n.Lon, n.Lat)) })
+                    .Select(n => new
+                    {
+                        Node = n,
+                        Position = ProjectPosition(baseline, new Coordinate(n.Lon, n.Lat))
+                    })
                     .OrderBy(x => x.Position)
                     .ToArray();
+
+                if (ordered.Length < 2)
+                    continue;
 
                 var coordinates = ordered
                     .Select(x => new Coordinate(x.Node.Lon, x.Node.Lat))
                     .ToArray();
-                if (coordinates.Length < 2)
-                    continue;
-
                 var c4 = Factory.CreateLineString(coordinates);
                 allC4Lines.Add(c4);
 
                 foreach (var item in ordered)
+                {
                     allNodes.Add(new
                     {
                         lon = item.Node.Lon,
@@ -134,6 +139,9 @@ static class BoundaryNodeChainLab
                         source = item.Node.Source,
                         position = item.Position
                     });
+                    if (item.Node.Source != "anchor")
+                        usedJunctionKeys.Add(NodeKey(item.Node));
+                }
 
                 componentPayload.Add(new
                 {
@@ -141,26 +149,25 @@ static class BoundaryNodeChainLab
                     c4 = LineToGeoJson(c4),
                     baselineVertexCount = baseline.NumPoints,
                     c4NodeCount = coordinates.Length,
+                    junctionCount = ordered.Count(x => x.Node.Source != "anchor"),
                     maxDeviationDegrees = MaxDeviation(baseline, c4)
                 });
             }
 
             Console.WriteLine(
-                $"C4.4 {pairKey}: {foreignEdges.Length} logical foreign edge(s), " +
-                $"{graphComponents.Count} logical graph component(s), {graphNodes.Count} logical node(s), " +
-                $"{borderComponents.Count} real-border component(s).");
+                $"C4.5 {pairKey}: {usedJunctionKeys.Count} Voronoi/real-border junction(s), " +
+                $"{borderComponents.Count} real-border component(s), {internalEdgeCount} internal edge part(s) inspected.");
 
             pairs.Add(new
             {
                 pair = pairKey,
                 owners = new[] { ownerA, ownerB },
-                foreignEdgeCount = foreignEdges.Length,
-                graphComponentCount = graphComponents.Count,
-                graphNodeCount = graphNodes.Count,
+                junctionCount = usedJunctionKeys.Count,
+                realBorderComponentCount = borderComponents.Count,
+                internalEdgePartCount = internalEdgeCount,
                 components = componentPayload,
                 nodes = allNodes,
                 baseline = MultiLineToGeoJson(borderComponents),
-                graphFrontier = MultiLineToGeoJson(logicalEdgeLines),
                 c4 = MultiLineToGeoJson(allC4Lines)
             });
         }
@@ -168,7 +175,7 @@ static class BoundaryNodeChainLab
         var payload = new
         {
             status = "experimental",
-            description = "C4.4 boundary-node chain experiment. Each foreign Voronoi adjacency is treated as one logical edge regardless of how many geometry vertices/fragments describe it. Only the two logical endpoints of each edge, plus missing real-frontier anchors, become chain nodes. No territory surfaces are recomposed in this lab.",
+            description = "C4.5 boundary-node chain experiment. Nodes are only junctions where an internal Voronoi edge of either adjacent owner terminates on the current real A-B border. Those junctions are ordered along the real border and connected by straight segments; real-border endpoints are anchors only. No territory surfaces are recomposed.",
             targetOwners = TargetOwners.OrderBy(x => x).ToArray(),
             pairCount = pairs.Count,
             pairs
@@ -179,52 +186,27 @@ static class BoundaryNodeChainLab
             JsonSerializer.Serialize(payload));
     }
 
-    static LineString? LogicalEdgeLine(IEnumerable<LineString> parts)
+    static void AddEndpointIfOnBorder(
+        Coordinate coordinate,
+        string owner,
+        Geometry border,
+        List<Node> nodes)
     {
-        var endpoints = parts
-            .SelectMany(line => new[]
-            {
-                line.GetCoordinateN(0),
-                line.GetCoordinateN(line.NumPoints - 1)
-            })
-            .ToArray();
+        var point = Factory.CreatePoint(coordinate);
+        if (point.Distance(border) > NodeTolerance)
+            return;
 
-        if (endpoints.Length < 2)
-            return null;
-
-        Coordinate? bestA = null;
-        Coordinate? bestB = null;
-        var bestDistance = -1.0;
-
-        for (var i = 0; i < endpoints.Length; i++)
-        {
-            for (var j = i + 1; j < endpoints.Length; j++)
-            {
-                var dx = endpoints[i].X - endpoints[j].X;
-                var dy = endpoints[i].Y - endpoints[j].Y;
-                var d2 = dx * dx + dy * dy;
-                if (d2 <= bestDistance)
-                    continue;
-                bestDistance = d2;
-                bestA = endpoints[i];
-                bestB = endpoints[j];
-            }
-        }
-
-        if (bestA is null || bestB is null || bestDistance <= 1e-18)
-            return null;
-
-        return Factory.CreateLineString(new[]
-        {
-            new Coordinate(bestA),
-            new Coordinate(bestB)
-        });
+        AddNode(nodes, new Node(coordinate.X, coordinate.Y, $"junction-{owner}"));
     }
 
     static List<LineString> MergeLines(IEnumerable<LineString> lines)
     {
+        var values = lines.ToArray();
+        if (values.Length == 0)
+            return new List<LineString>();
+
         var merger = new LineMerger();
-        merger.Add(lines.ToArray());
+        merger.Add(values);
         return merger.GetMergedLineStrings().Cast<LineString>()
             .OrderByDescending(x => x.Length)
             .ToList();
@@ -264,6 +246,8 @@ static class BoundaryNodeChainLab
         if (nodes[existing].Source == "anchor" && candidate.Source != "anchor")
             nodes[existing] = candidate;
     }
+
+    static string NodeKey(Node node) => $"{Math.Round(node.Lon, 5):F5},{Math.Round(node.Lat, 5):F5}";
 
     static double Distance(Node a, Node b)
     {
