@@ -67,34 +67,36 @@ static class BoundaryNodeChainLab
             if (borderComponents.Count == 0)
                 continue;
 
-            // C4.3: do not infer nodes by intersecting internal edges with a rebuilt owner border.
-            // The Voronoi graph already identifies every edge whose two cells have different owners.
-            // For this A-B pair, those foreign edges are the cellular frontier. Their topological
-            // endpoints/junctions are the only candidate nodes used by the straight-node chain.
             var foreignEdges = edges
                 .Where(e => e.Foreign && PairKey(byId[e.A].OwnerCode, byId[e.B].OwnerCode)
                     .Equals(pairKey, StringComparison.OrdinalIgnoreCase))
                 .ToArray();
 
-            var foreignLinework = foreignEdges
-                .SelectMany(e => SharedLinework(byId[e.A].Geometry, byId[e.B].Geometry))
-                .Where(line => !line.IsEmpty && line.NumPoints >= 2)
-                .ToArray();
-
-            var foreignComponents = MergeLines(foreignLinework);
+            // C4.4: each graph Edge is a logical Voronoi adjacency, even if its geometry is
+            // represented by many vertices or several tiny line fragments after clipping.
+            // Collapse every logical edge to exactly two topological endpoints. Intermediate
+            // geometry vertices remain useful for drawing, but are no longer promoted to nodes.
+            var logicalEdgeLines = new List<LineString>();
             var graphNodes = new List<Node>();
-            foreach (var line in foreignLinework)
+
+            foreach (var edge in foreignEdges)
             {
-                AddNode(graphNodes, new Node(
-                    line.GetCoordinateN(0).X,
-                    line.GetCoordinateN(0).Y,
-                    "foreign-edge-vertex"));
-                AddNode(graphNodes, new Node(
-                    line.GetCoordinateN(line.NumPoints - 1).X,
-                    line.GetCoordinateN(line.NumPoints - 1).Y,
-                    "foreign-edge-vertex"));
+                var parts = SharedLinework(byId[edge.A].Geometry, byId[edge.B].Geometry)
+                    .Where(line => !line.IsEmpty && line.NumPoints >= 2)
+                    .ToArray();
+
+                var logical = LogicalEdgeLine(parts);
+                if (logical is null)
+                    continue;
+
+                logicalEdgeLines.Add(logical);
+                var start = logical.GetCoordinateN(0);
+                var end = logical.GetCoordinateN(logical.NumPoints - 1);
+                AddNode(graphNodes, new Node(start.X, start.Y, "logical-edge-endpoint"));
+                AddNode(graphNodes, new Node(end.X, end.Y, "logical-edge-endpoint"));
             }
 
+            var graphComponents = MergeLines(logicalEdgeLines);
             var componentPayload = new List<object>();
             var allC4Lines = new List<LineString>();
             var allNodes = new List<object>();
@@ -105,8 +107,6 @@ static class BoundaryNodeChainLab
                     .Where(n => Factory.CreatePoint(new Coordinate(n.Lon, n.Lat)).Distance(baseline) <= NodeTolerance)
                     .ToList();
 
-                // Endpoints are anchors of the real A-B frontier. They are added only when the graph
-                // does not already provide the same coordinate, and are explicitly tagged as anchors.
                 var start = baseline.GetCoordinateN(0);
                 var end = baseline.GetCoordinateN(baseline.NumPoints - 1);
                 AddNode(componentNodes, new Node(start.X, start.Y, "anchor"));
@@ -146,8 +146,8 @@ static class BoundaryNodeChainLab
             }
 
             Console.WriteLine(
-                $"C4.3 {pairKey}: {foreignEdges.Length} foreign graph edge(s), " +
-                $"{foreignComponents.Count} graph component(s), {graphNodes.Count} graph node(s), " +
+                $"C4.4 {pairKey}: {foreignEdges.Length} logical foreign edge(s), " +
+                $"{graphComponents.Count} logical graph component(s), {graphNodes.Count} logical node(s), " +
                 $"{borderComponents.Count} real-border component(s).");
 
             pairs.Add(new
@@ -155,12 +155,12 @@ static class BoundaryNodeChainLab
                 pair = pairKey,
                 owners = new[] { ownerA, ownerB },
                 foreignEdgeCount = foreignEdges.Length,
-                graphComponentCount = foreignComponents.Count,
+                graphComponentCount = graphComponents.Count,
                 graphNodeCount = graphNodes.Count,
                 components = componentPayload,
                 nodes = allNodes,
                 baseline = MultiLineToGeoJson(borderComponents),
-                graphFrontier = MultiLineToGeoJson(foreignComponents),
+                graphFrontier = MultiLineToGeoJson(logicalEdgeLines),
                 c4 = MultiLineToGeoJson(allC4Lines)
             });
         }
@@ -168,7 +168,7 @@ static class BoundaryNodeChainLab
         var payload = new
         {
             status = "experimental",
-            description = "C4.3 boundary-node chain experiment. Foreign Voronoi edges (edges between cells with different owners) directly define the cellular frontier graph. Only their topological endpoints/junctions, plus missing real-frontier anchors, become chain nodes. No territory surfaces are recomposed in this lab.",
+            description = "C4.4 boundary-node chain experiment. Each foreign Voronoi adjacency is treated as one logical edge regardless of how many geometry vertices/fragments describe it. Only the two logical endpoints of each edge, plus missing real-frontier anchors, become chain nodes. No territory surfaces are recomposed in this lab.",
             targetOwners = TargetOwners.OrderBy(x => x).ToArray(),
             pairCount = pairs.Count,
             pairs
@@ -177,6 +177,48 @@ static class BoundaryNodeChainLab
         await File.WriteAllTextAsync(
             Path.Combine(outDir, "c4-boundary-node-chain-lab.json"),
             JsonSerializer.Serialize(payload));
+    }
+
+    static LineString? LogicalEdgeLine(IEnumerable<LineString> parts)
+    {
+        var endpoints = parts
+            .SelectMany(line => new[]
+            {
+                line.GetCoordinateN(0),
+                line.GetCoordinateN(line.NumPoints - 1)
+            })
+            .ToArray();
+
+        if (endpoints.Length < 2)
+            return null;
+
+        Coordinate? bestA = null;
+        Coordinate? bestB = null;
+        var bestDistance = -1.0;
+
+        for (var i = 0; i < endpoints.Length; i++)
+        {
+            for (var j = i + 1; j < endpoints.Length; j++)
+            {
+                var dx = endpoints[i].X - endpoints[j].X;
+                var dy = endpoints[i].Y - endpoints[j].Y;
+                var d2 = dx * dx + dy * dy;
+                if (d2 <= bestDistance)
+                    continue;
+                bestDistance = d2;
+                bestA = endpoints[i];
+                bestB = endpoints[j];
+            }
+        }
+
+        if (bestA is null || bestB is null || bestDistance <= 1e-18)
+            return null;
+
+        return Factory.CreateLineString(new[]
+        {
+            new Coordinate(bestA),
+            new Coordinate(bestB)
+        });
     }
 
     static List<LineString> MergeLines(IEnumerable<LineString> lines)
@@ -219,7 +261,6 @@ static class BoundaryNodeChainLab
             return;
         }
 
-        // Prefer an actual foreign-edge vertex over a synthetic anchor at the same coordinate.
         if (nodes[existing].Source == "anchor" && candidate.Source != "anchor")
             nodes[existing] = candidate;
     }
