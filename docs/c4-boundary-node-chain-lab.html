@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>World Conquest · C4.3 Boundary Node Chain</title>
+  <title>World Conquest · C4.4 Boundary Node Chain</title>
   <style>
     :root { color-scheme: dark; font-family: system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
     * { box-sizing:border-box; }
@@ -33,15 +33,15 @@
 <body>
   <div id="map"><svg id="svg"><g id="viewport"></g></svg></div>
   <div class="panel">
-    <h1>WORLD CONQUEST · C4.3 FRONTIER NODE CHAIN</h1>
+    <h1>WORLD CONQUEST · C4.4 FRONTIER NODE CHAIN</h1>
     <div class="sub" id="summary">Chargement…</div>
     <div class="controls" id="pairs"></div>
     <div class="controls" id="modes"></div>
   </div>
   <div class="legend">
     <div><span class="sw" style="background:#64748b"></span>frontière réelle actuelle</div>
-    <div><span class="sw" style="background:#ef4444"></span>C4.3 · chaîne droite entre nœuds</div>
-    <div><span class="node"></span>sommet du graphe Voronoï étranger</div>
+    <div><span class="sw" style="background:#ef4444"></span>C4.4 · chaîne droite entre nœuds</div>
+    <div><span class="node"></span>extrémité logique d’arête Voronoï étrangère</div>
     <div><span class="node anchor-dot"></span>ancre ajoutée si nécessaire</div>
   </div>
 <script>
@@ -83,7 +83,7 @@
     return !(Math.max(...xs)<b[0]||Math.min(...xs)>b[2]||Math.max(...ys)<b[1]||Math.min(...ys)>b[3]);
   }
   function nodesOfPair(pair){
-    return Array.isArray(pair.nodes) ? pair.nodes.map(n=>({lon:n.lon,lat:n.lat,source:n.source||'foreign-edge-vertex'})) : [];
+    return Array.isArray(pair.nodes) ? pair.nodes.map(n=>({lon:n.lon,lat:n.lat,source:n.source||'logical-edge-endpoint'})) : [];
   }
   function fit(){
     const b=boundsOfPair(current); const w=b[2]-b[0],h=b[3]-b[1];
@@ -102,11 +102,11 @@
     const graphNodes=current.graphNodeCount ?? nodes.filter(n=>n.source!=='anchor').length;
     const graphComponents=current.graphComponentCount ?? '?';
     const graphEdges=current.foreignEdgeCount ?? '?';
-    summary.textContent=`${current.pair} · ${graphNodes} nœuds graphe · ${graphEdges} arêtes étrangères · ${graphComponents} composante(s) graphe · C4.3 expérimental`;
+    summary.textContent=`${current.pair} · ${graphNodes} nœuds logiques · ${graphEdges} arêtes étrangères · ${graphComponents} composante(s) graphe · C4.4 expérimental`;
   }
   function selectPair(p,button){current=p;[...pairControls.children].forEach(x=>x.classList.remove('active'));button.classList.add('active');fit();draw();}
   data.pairs.forEach((p,i)=>{const b=document.createElement('button');b.textContent=p.pair;b.addEventListener('click',()=>selectPair(p,b));if(i===0)b.classList.add('active');pairControls.appendChild(b);});
-  [['both','Les deux'],['real','Actuelle'],['c4','C4.3']].forEach(([key,label],i)=>{const b=document.createElement('button');b.textContent=label;b.addEventListener('click',()=>{mode=key;[...modeControls.children].forEach(x=>x.classList.remove('active'));b.classList.add('active');draw();});if(i===0)b.classList.add('active');modeControls.appendChild(b);});
+  [['both','Les deux'],['real','Actuelle'],['c4','C4.4']].forEach(([key,label],i)=>{const b=document.createElement('button');b.textContent=label;b.addEventListener('click',()=>{mode=key;[...modeControls.children].forEach(x=>x.classList.remove('active'));b.classList.add('active');draw();});if(i===0)b.classList.add('active');modeControls.appendChild(b);});
 
   let vb=svg.viewBox.baseVal;
   function zoomAt(f,cx,cy){const pt=svg.createSVGPoint();pt.x=cx;pt.y=cy;const m=svg.getScreenCTM();if(!m)return;const p=pt.matrixTransform(m.inverse());vb.x=p.x-(p.x-vb.x)/f;vb.y=p.y-(p.y-vb.y)/f;vb.width/=f;vb.height/=f;}
