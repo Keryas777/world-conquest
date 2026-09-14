@@ -22,16 +22,16 @@ static class BoundaryNodeChainLab
         var cells = root.GetProperty("cells").EnumerateArray().Select(ParseCell).ToArray();
 
         // C4.6 is intentionally a diagnostic on one border only.
-        // Goal: verify the exact junctions Jérôme marked in Territory Lab before drawing anything.
-        const string ownerA = "FR";
+        // Goal: inspect the problematic BE-LU border before drawing anything.
+        const string ownerA = "BE";
         const string ownerB = "LU";
-        var pairKey = "FR-LU";
+        var pairKey = "BE-LU";
 
         var ownerARegion = SafeUnion(cells.Where(c => c.OwnerCode == ownerA).Select(c => c.Geometry));
         var ownerBRegion = SafeUnion(cells.Where(c => c.OwnerCode == ownerB).Select(c => c.Geometry));
         var borderComponents = MergeLines(SharedLinework(ownerARegion, ownerBRegion));
         if (borderComponents.Count == 0)
-            throw new InvalidOperationException("C4.6: no FR-LU border component found.");
+            throw new InvalidOperationException("C4.6: no BE-LU border component found.");
 
         var borderUnion = SafeUnion(borderComponents.Cast<Geometry>());
         var junctions = new List<Node>();
@@ -104,7 +104,7 @@ static class BoundaryNodeChainLab
         var payload = new
         {
             status = "experimental",
-            description = "C4.6 diagnostic only. Junctions are extracted directly from each FR/LU Voronoi cell boundary where it touches the current real FR-LU border. No replacement frontier is drawn and no territory surface is modified.",
+            description = "C4.6 diagnostic only. Junctions are extracted directly from each BE/LU Voronoi cell boundary where it touches the current real BE-LU border. No replacement frontier is drawn and no territory surface is modified.",
             targetOwners = new[] { ownerA, ownerB },
             pairCount = 1,
             pairs = new[]
