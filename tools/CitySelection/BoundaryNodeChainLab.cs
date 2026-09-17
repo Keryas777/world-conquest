@@ -1,6 +1,5 @@
 using System.Text.Json;
 using NetTopologySuite.Geometries;
-using NetTopologySuite.Operation.Distance;
 using NetTopologySuite.Operation.Linemerge;
 using NetTopologySuite.Operation.OverlayNG;
 
@@ -8,6 +7,7 @@ static class BoundaryNodeChainLab
 {
     sealed record Cell(long Id, string OwnerCode, Geometry Geometry);
     sealed record InternalEdge(string OwnerCode, long CellA, long CellB, LineString Line);
+    sealed record Hit(string OwnerCode, long CellA, long CellB, Coordinate Point, LineString Edge);
 
     static readonly GeometryFactory Factory =
         NetTopologySuite.NtsGeometryServices.Instance.CreateGeometryFactory(srid: 4326);
@@ -20,9 +20,10 @@ static class BoundaryNodeChainLab
         using var document = JsonDocument.Parse(await File.ReadAllTextAsync(graphPath));
         var cells = document.RootElement.GetProperty("cells").EnumerateArray().Select(ParseCell).ToArray();
 
-        // C4.9 is diagnostic only. We inspect the exact same-owner Voronoi edges
-        // around BE-LU and measure how close their endpoints really are to the
-        // reconstructed BE-LU border. No replacement frontier is produced.
+        // C4.11 is diagnostic only. Instead of projecting nearby Voronoi endpoints
+        // onto the BE-LU border, intersect every same-owner internal Voronoi edge
+        // with the real reconstructed BE-LU border. Only exact geometric contacts
+        // are retained; no distance threshold and no replacement frontier are used.
         const string ownerA = "BE";
         const string ownerB = "LU";
         const string pairKey = "BE-LU";
@@ -33,72 +34,60 @@ static class BoundaryNodeChainLab
         var regionB = SafeUnion(cellsB.Select(c => c.Geometry));
         var borderComponents = MergeLines(EnumerateLines(SafeIntersection(regionA.Boundary, regionB.Boundary)));
         if (borderComponents.Count == 0)
-            throw new InvalidOperationException("C4.9: no BE-LU border component found.");
+            throw new InvalidOperationException("C4.11: no BE-LU border component found.");
 
         var borderUnion = SafeUnion(borderComponents.Cast<Geometry>());
         var internalEdges = BuildInternalEdges(cellsA)
             .Concat(BuildInternalEdges(cellsB))
             .ToArray();
 
-        var candidates = new List<object>();
-        var ranked = new List<(double Km, InternalEdge Edge, Coordinate Endpoint, Coordinate BorderPoint)>();
-
+        var rawHits = new List<Hit>();
         foreach (var edge in internalEdges)
         {
-            if (edge.Line.NumPoints == 0)
-                continue;
-
-            var endpoints = new[]
-            {
-                edge.Line.GetCoordinateN(0),
-                edge.Line.GetCoordinateN(edge.Line.NumPoints - 1)
-            };
-
-            foreach (var endpoint in endpoints)
-            {
-                var point = Factory.CreatePoint(new Coordinate(endpoint));
-                var nearest = new DistanceOp(point, borderUnion).NearestPoints();
-                if (nearest.Length < 2)
-                    continue;
-
-                var borderPoint = nearest[1];
-                var km = ApproxKm(endpoint, borderPoint);
-                ranked.Add((km, edge, new Coordinate(endpoint), new Coordinate(borderPoint)));
-            }
+            var intersection = SafeIntersection(edge.Line, borderUnion);
+            foreach (var point in EnumeratePointCoordinates(intersection))
+                rawHits.Add(new Hit(edge.OwnerCode, edge.CellA, edge.CellB, new Coordinate(point), edge.Line));
         }
 
-        var top = ranked
-            .OrderBy(x => x.Km)
-            .ThenBy(x => x.Edge.OwnerCode, StringComparer.Ordinal)
-            .ThenBy(x => x.Edge.CellA)
-            .ThenBy(x => x.Edge.CellB)
-            .Take(24)
-            .ToArray();
-
-        for (var i = 0; i < top.Length; i++)
+        // A Voronoi vertex can be represented by several incident internal edges.
+        // Collapse coincident contacts so the diagnostic counts physical junctions,
+        // not edge incidences.
+        var groups = new List<List<Hit>>();
+        foreach (var hit in rawHits.OrderBy(h => h.Point.X).ThenBy(h => h.Point.Y))
         {
-            var x = top[i];
-            candidates.Add(new
-            {
-                rank = i + 1,
-                owner = x.Edge.OwnerCode,
-                cellA = x.Edge.CellA,
-                cellB = x.Edge.CellB,
-                distanceKm = Math.Round(x.Km, 4),
-                endpoint = new[] { Math.Round(x.Endpoint.X, 6), Math.Round(x.Endpoint.Y, 6) },
-                nearestBorder = new[] { Math.Round(x.BorderPoint.X, 6), Math.Round(x.BorderPoint.Y, 6) },
-                edge = LineToGeoJson(x.Edge.Line)
-            });
+            var group = groups.FirstOrDefault(g => ApproxKm(g[0].Point, hit.Point) <= 0.01);
+            if (group is null)
+                groups.Add(new List<Hit> { hit });
+            else
+                group.Add(hit);
         }
 
-        Console.WriteLine($"C4.9 {pairKey}: inspected {internalEdges.Length} internal edge(s), {ranked.Count} endpoint(s).");
-        foreach (var x in top.Take(10))
-            Console.WriteLine($"  {x.Edge.OwnerCode} cells {x.Edge.CellA}/{x.Edge.CellB}: endpoint-border distance={x.Km:F4} km at {x.Endpoint.X:F6},{x.Endpoint.Y:F6}");
+        var junctions = groups.Select((group, index) =>
+        {
+            var x = group.Average(h => h.Point.X);
+            var y = group.Average(h => h.Point.Y);
+            return new
+            {
+                id = index + 1,
+                point = new[] { Math.Round(x, 6), Math.Round(y, 6) },
+                incidenceCount = group.Count,
+                owners = group.Select(h => h.OwnerCode).Distinct().OrderBy(x => x).ToArray(),
+                edges = group.Select(h => new
+                {
+                    owner = h.OwnerCode,
+                    cellA = h.CellA,
+                    cellB = h.CellB,
+                    geometry = LineToGeoJson(h.Edge)
+                }).ToArray()
+            };
+        }).ToArray();
+
+        Console.WriteLine($"C4.11 {pairKey}: inspected {internalEdges.Length} internal edge(s), exact incidences={rawHits.Count}, unique junctions={junctions.Length}.");
 
         var payload = new
         {
             status = "experimental",
-            description = "C4.9 diagnostic only. Same-owner Voronoi edge endpoints near the BE-LU border are ranked by true endpoint-to-border distance so the visually expected middle junction can be identified from the stored geometry. No replacement frontier or territory surface is produced.",
+            description = "C4.11 diagnostic only. Exact geometric intersections between same-owner internal Voronoi edges (BE or LU) and the reconstructed BE-LU border. No projection, distance threshold, replacement frontier or territory surface modification.",
             targetOwners = new[] { ownerA, ownerB },
             pairCount = 1,
             pairs = new[]
@@ -108,9 +97,10 @@ static class BoundaryNodeChainLab
                     pair = pairKey,
                     owners = new[] { ownerA, ownerB },
                     internalEdgeCount = internalEdges.Length,
-                    endpointCount = ranked.Count,
+                    exactIncidenceCount = rawHits.Count,
+                    uniqueJunctionCount = junctions.Length,
                     realBorderComponentCount = borderComponents.Count,
-                    candidates,
+                    junctions,
                     components = borderComponents.Select(line => new
                     {
                         baseline = LineToGeoJson(line),
@@ -144,6 +134,35 @@ static class BoundaryNodeChainLab
                         yield return new InternalEdge(a.OwnerCode, a.Id, b.Id, line);
                 }
             }
+        }
+    }
+
+    static IEnumerable<Coordinate> EnumeratePointCoordinates(Geometry geometry)
+    {
+        if (geometry is Point point)
+        {
+            if (!point.IsEmpty) yield return point.Coordinate;
+            yield break;
+        }
+
+        // Collinear overlap is not a single junction. Keep only its endpoints so it
+        // remains visible diagnostically without manufacturing intermediate nodes.
+        if (geometry is LineString line)
+        {
+            if (!line.IsEmpty && line.NumPoints > 0)
+            {
+                yield return line.GetCoordinateN(0);
+                if (line.NumPoints > 1)
+                    yield return line.GetCoordinateN(line.NumPoints - 1);
+            }
+            yield break;
+        }
+
+        if (geometry is GeometryCollection collection)
+        {
+            for (var i = 0; i < collection.NumGeometries; i++)
+                foreach (var coordinate in EnumeratePointCoordinates(collection.GetGeometryN(i)))
+                    yield return coordinate;
         }
     }
 
