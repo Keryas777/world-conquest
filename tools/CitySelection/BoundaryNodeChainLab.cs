@@ -1,5 +1,6 @@
 using System.Text.Json;
 using NetTopologySuite.Geometries;
+using NetTopologySuite.Operation.Distance;
 using NetTopologySuite.Operation.Linemerge;
 using NetTopologySuite.Operation.OverlayNG;
 
@@ -20,10 +21,10 @@ static class BoundaryNodeChainLab
         using var document = JsonDocument.Parse(await File.ReadAllTextAsync(graphPath));
         var cells = document.RootElement.GetProperty("cells").EnumerateArray().Select(ParseCell).ToArray();
 
-        // C4.14 diagnostic: a valid Voronoi junction is an endpoint of a same-owner
-        // internal edge that lies on an actual BE-LU cross-owner boundary segment.
-        // It does not need to equal one of that segment's stored vertices. No
-        // nearest-point projection and no proximity threshold are used.
+        // C4.15 diagnostic only: do not decide junction validity. Measure every internal
+        // edge endpoint against the actual BE-LU cross-owner edges and export the
+        // nearest pairs. This is intended to explain the visually touching central
+        // endpoint without introducing another detector or modifying geometry.
         const string ownerA = "BE";
         const string ownerB = "LU";
         const string pairKey = "BE-LU";
@@ -33,47 +34,51 @@ static class BoundaryNodeChainLab
         var regionA = SafeUnion(cellsA.Select(c => c.Geometry));
         var regionB = SafeUnion(cellsB.Select(c => c.Geometry));
         var borderComponents = MergeLines(EnumerateLines(SafeIntersection(regionA.Boundary, regionB.Boundary)));
-        if (borderComponents.Count == 0) throw new InvalidOperationException("C4.14: no BE-LU border component found.");
+        if (borderComponents.Count == 0) throw new InvalidOperationException("C4.15: no BE-LU border component found.");
 
         var internalEdges = BuildInternalEdges(cellsA).Concat(BuildInternalEdges(cellsB)).ToArray();
         var crossOwnerEdges = BuildCrossOwnerEdges(cellsA, cellsB).ToArray();
-        var raw = new List<Junction>();
-        foreach (var edge in internalEdges)
+        var endpointDiagnostics = internalEdges.SelectMany(edge =>
         {
-            if (edge.Line.NumPoints == 0) continue;
-            foreach (var endpoint in new[] { edge.Line.GetCoordinateN(0), edge.Line.GetCoordinateN(edge.Line.NumPoints - 1) })
-            {
-                var point = Factory.CreatePoint(new Coordinate(endpoint));
-                if (crossOwnerEdges.Any(borderEdge => borderEdge.Covers(point)))
-                    raw.Add(new Junction(edge.OwnerCode, edge.CellA, edge.CellB, new Coordinate(endpoint), edge.Line));
-            }
-        }
+            if (edge.Line.NumPoints == 0) return Array.Empty<object>();
+            return new[] { edge.Line.GetCoordinateN(0), edge.Line.GetCoordinateN(edge.Line.NumPoints - 1) }
+                .Select(endpoint =>
+                {
+                    var point = Factory.CreatePoint(new Coordinate(endpoint));
+                    var nearest = crossOwnerEdges.Select(borderEdge =>
+                    {
+                        var pair = new DistanceOp(point, borderEdge).NearestPoints();
+                        var borderPoint = pair.Length > 1 ? pair[1] : endpoint;
+                        return new { borderEdge, borderPoint, distanceKm = ApproxKm(endpoint, borderPoint) };
+                    }).OrderBy(x => x.distanceKm).First();
+                    return (object)new
+                    {
+                        owner = edge.OwnerCode,
+                        cellA = edge.CellA,
+                        cellB = edge.CellB,
+                        endpoint = new[] { Math.Round(endpoint.X, 9), Math.Round(endpoint.Y, 9) },
+                        nearestBorderPoint = new[] { Math.Round(nearest.borderPoint.X, 9), Math.Round(nearest.borderPoint.Y, 9) },
+                        distanceKm = Math.Round(nearest.distanceKm, 6),
+                        distanceMeters = Math.Round(nearest.distanceKm * 1000.0, 3),
+                        exactCover = nearest.borderEdge.Covers(point),
+                        edge = LineToGeoJson(edge.Line),
+                        borderEdge = LineToGeoJson(nearest.borderEdge)
+                    };
+                }).ToArray();
+        }).Cast<dynamic>().OrderBy(x => (double)x.distanceKm).Take(12).ToArray();
 
-        var groups = new List<List<Junction>>();
-        foreach (var hit in raw.OrderBy(h => h.Point.X).ThenBy(h => h.Point.Y))
-        {
-            var group = groups.FirstOrDefault(g => g[0].Point.Equals2D(hit.Point));
-            if (group is null) groups.Add(new List<Junction>{hit}); else group.Add(hit);
-        }
-        var junctions = groups.Select((group,index)=>new {
-            id=index+1,
-            point=new[]{Math.Round(group[0].Point.X,6),Math.Round(group[0].Point.Y,6)},
-            incidenceCount=group.Count,
-            owners=group.Select(h=>h.OwnerCode).Distinct().OrderBy(x=>x).ToArray(),
-            edges=group.Select(h=>new{owner=h.OwnerCode,cellA=h.CellA,cellB=h.CellB,geometry=LineToGeoJson(h.Edge)}).ToArray()
-        }).ToArray();
-
+        var junctions = Array.Empty<object>();
         // Border terminals are independent of Voronoi junctions. For this diagnostic,
         // take the two farthest endpoints among reconstructed BE-LU components.
         var terminalCandidates = borderComponents.SelectMany(l=>new[]{l.GetCoordinateN(0),l.GetCoordinateN(l.NumPoints-1)}).ToArray();
         var terminalPair = FarthestPair(terminalCandidates);
         var terminals = terminalPair.Select((p,i)=>new{id=i+1,point=new[]{Math.Round(p.X,6),Math.Round(p.Y,6)}}).ToArray();
-        Console.WriteLine($"C4.14 {pairKey}: internal edges={internalEdges.Length}, cross-owner edges={crossOwnerEdges.Length}, true junctions={junctions.Length}, terminals={terminals.Length}.");
+        Console.WriteLine($"C4.15 {pairKey}: internal edges={internalEdges.Length}, cross-owner edges={crossOwnerEdges.Length}, exported nearest endpoint diagnostics={endpointDiagnostics.Length}, terminals={terminals.Length}.");
 
         var payload = new
         {
             status = "experimental",
-            description = "C4.14 diagnostic only. True BE-LU junctions are same-owner internal Voronoi edge endpoints covered by an actual opposite-owner BE-LU boundary segment; the endpoint need not be a stored border vertex. No projection or distance threshold. Border terminals are reported separately.",
+            description = "C4.15 diagnostic only. Measures the nearest actual BE-LU cross-owner boundary segment for internal Voronoi endpoints. No junction decision, no snapping, no projection used to modify geometry.",
             targetOwners = new[] { ownerA, ownerB },
             pairCount = 1,
             pairs = new[]
@@ -84,7 +89,8 @@ static class BoundaryNodeChainLab
                     owners = new[] { ownerA, ownerB },
                     internalEdgeCount = internalEdges.Length,
                     crossOwnerEdgeCount = crossOwnerEdges.Length,
-                    trueJunctionCount = junctions.Length,
+                    diagnosticEndpointCount = endpointDiagnostics.Length,
+                    endpointDiagnostics,
                     terminalCount = terminals.Length,
                     terminals,
                     realBorderComponentCount = borderComponents.Count,
