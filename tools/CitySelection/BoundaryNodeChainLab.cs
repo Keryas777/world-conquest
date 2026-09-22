@@ -35,11 +35,6 @@ static class BoundaryNodeChainLab
         var borderComponents = MergeLines(EnumerateLines(SafeIntersection(regionA.Boundary, regionB.Boundary)));
         if (borderComponents.Count == 0) throw new InvalidOperationException("C4.17: no BE-LU border component found.");
 
-        // The two owner boundaries are already sub-metre apart at the interesting
-        // locations. Snap LU boundary vertices to the nearest BE boundary location
-        // only when they are within 2 metres, then intersect the snapped LU boundary
-        // with a 2 m buffer around BE. This tolerance reconciles source-coordinate
-        // noise; it is not a Voronoi-junction acceptance threshold.
         const double canonicalToleranceKm = 0.002;
         var canonicalBorder = BuildCanonicalBorder(regionA.Boundary, regionB.Boundary, canonicalToleranceKm);
         var canonicalComponents = MergeLines(EnumerateLines(canonicalBorder));
@@ -97,8 +92,6 @@ static class BoundaryNodeChainLab
         }).Cast<dynamic>().OrderBy(x => (double)x.distanceKm).Take(12).ToArray();
 
         var junctions = Array.Empty<object>();
-        // Border terminals are independent of Voronoi junctions. For this diagnostic,
-        // take the two farthest endpoints among reconstructed BE-LU components.
         var terminalCandidates = borderComponents.SelectMany(l=>new[]{l.GetCoordinateN(0),l.GetCoordinateN(l.NumPoints-1)}).ToArray();
         var terminalPair = FarthestPair(terminalCandidates);
         var terminals = terminalPair.Select((p,i)=>new{id=i+1,point=new[]{Math.Round(p.X,6),Math.Round(p.Y,6)}}).ToArray();
@@ -143,31 +136,31 @@ static class BoundaryNodeChainLab
 
     static Geometry BuildCanonicalBorder(Geometry aBoundary, Geometry bBoundary, double toleranceKm)
     {
-        // Snap coordinates of B onto A where disagreement is only source precision.
-        var editor = new NetTopologySuite.Geometries.Utilities.GeometryEditor(Factory);
-        var snappedB = editor.Edit(bBoundary, new SnapToBoundaryOperation(aBoundary, toleranceKm));
-        // Keep only the portion of the reconciled B boundary that is effectively on A.
+        var snappedB = SnapGeometryToBoundary(bBoundary, aBoundary, toleranceKm);
         var toleranceDegrees = toleranceKm / 110.57;
         return SafeIntersection(snappedB, aBoundary.Buffer(toleranceDegrees));
     }
 
-    sealed class SnapToBoundaryOperation : NetTopologySuite.Geometries.Utilities.GeometryEditor.CoordinateSequenceOperation
+    static Geometry SnapGeometryToBoundary(Geometry geometry, Geometry target, double toleranceKm)
     {
-        readonly Geometry _target; readonly double _toleranceKm;
-        public SnapToBoundaryOperation(Geometry target, double toleranceKm) { _target=target; _toleranceKm=toleranceKm; }
-        public override CoordinateSequence Edit(CoordinateSequence seq, Geometry geometry)
-        {
-            var copy = seq.Copy();
-            for (var i=0;i<copy.Count;i++)
-            {
-                var c = copy.GetCoordinate(i);
-                var p = Factory.CreatePoint(c);
-                var pair = new DistanceOp(p,_target).NearestPoints();
-                if (pair.Length>1 && ApproxKm(c,pair[1]) <= _toleranceKm)
-                { copy.SetX(i,pair[1].X); copy.SetY(i,pair[1].Y); }
-            }
-            return copy;
-        }
+        if (geometry is LineString line)
+            return Factory.CreateLineString(line.Coordinates.Select(c => SnapCoordinate(c, target, toleranceKm)).ToArray());
+        if (geometry is MultiLineString multi)
+            return Factory.CreateMultiLineString(Enumerable.Range(0, multi.NumGeometries)
+                .Select(i => (LineString)SnapGeometryToBoundary(multi.GetGeometryN(i), target, toleranceKm)).ToArray());
+        if (geometry is GeometryCollection collection)
+            return Factory.CreateGeometryCollection(Enumerable.Range(0, collection.NumGeometries)
+                .Select(i => SnapGeometryToBoundary(collection.GetGeometryN(i), target, toleranceKm)).ToArray());
+        return geometry.Copy();
+    }
+
+    static Coordinate SnapCoordinate(Coordinate coordinate, Geometry target, double toleranceKm)
+    {
+        var point = Factory.CreatePoint(new Coordinate(coordinate));
+        var pair = new DistanceOp(point, target).NearestPoints();
+        return pair.Length > 1 && ApproxKm(coordinate, pair[1]) <= toleranceKm
+            ? new Coordinate(pair[1])
+            : new Coordinate(coordinate);
     }
 
     static IEnumerable<LineString> BuildCrossOwnerEdges(IReadOnlyList<Cell> aCells, IReadOnlyList<Cell> bCells)
@@ -197,45 +190,12 @@ static class BoundaryNodeChainLab
             {
                 var a = ownerCells[i];
                 var b = ownerCells[j];
-                if (!a.Geometry.EnvelopeInternal.Intersects(b.Geometry.EnvelopeInternal))
-                    continue;
-
+                if (!a.Geometry.EnvelopeInternal.Intersects(b.Geometry.EnvelopeInternal)) continue;
                 var shared = SafeIntersection(a.Geometry.Boundary, b.Geometry.Boundary);
                 foreach (var line in EnumerateLines(shared))
-                {
                     if (!line.IsEmpty && line.Length > NodeTolerance)
                         yield return new InternalEdge(a.OwnerCode, a.Id, b.Id, line);
-                }
             }
-        }
-    }
-
-    static IEnumerable<Coordinate> EnumeratePointCoordinates(Geometry geometry)
-    {
-        if (geometry is Point point)
-        {
-            if (!point.IsEmpty) yield return point.Coordinate;
-            yield break;
-        }
-
-        // Collinear overlap is not a single junction. Keep only its endpoints so it
-        // remains visible diagnostically without manufacturing intermediate nodes.
-        if (geometry is LineString line)
-        {
-            if (!line.IsEmpty && line.NumPoints > 0)
-            {
-                yield return line.GetCoordinateN(0);
-                if (line.NumPoints > 1)
-                    yield return line.GetCoordinateN(line.NumPoints - 1);
-            }
-            yield break;
-        }
-
-        if (geometry is GeometryCollection collection)
-        {
-            for (var i = 0; i < collection.NumGeometries; i++)
-                foreach (var coordinate in EnumeratePointCoordinates(collection.GetGeometryN(i)))
-                    yield return coordinate;
         }
     }
 
@@ -250,26 +210,17 @@ static class BoundaryNodeChainLab
     static List<LineString> MergeLines(IEnumerable<LineString> lines)
     {
         var values = lines.Where(l => !l.IsEmpty).ToArray();
-        if (values.Length == 0)
-            return new List<LineString>();
-        var merger = new LineMerger();
-        merger.Add(values);
+        if (values.Length == 0) return new List<LineString>();
+        var merger = new LineMerger(); merger.Add(values);
         return merger.GetMergedLineStrings().Cast<LineString>().OrderByDescending(x => x.Length).ToList();
     }
 
     static IEnumerable<LineString> EnumerateLines(Geometry geometry)
     {
-        if (geometry is LineString line)
-        {
-            yield return line;
-            yield break;
-        }
+        if (geometry is LineString line) { yield return line; yield break; }
         if (geometry is GeometryCollection collection)
-        {
             for (var i = 0; i < collection.NumGeometries; i++)
-                foreach (var part in EnumerateLines(collection.GetGeometryN(i)))
-                    yield return part;
-        }
+                foreach (var part in EnumerateLines(collection.GetGeometryN(i))) yield return part;
     }
 
     static Geometry SafeIntersection(Geometry a, Geometry b)
@@ -290,60 +241,32 @@ static class BoundaryNodeChainLab
     static Cell ParseCell(JsonElement element)
     {
         var geometry = ParseGeoJsonGeometry(element.GetProperty("geometry")) ?? Factory.CreatePolygon();
-        return new Cell(
-            element.GetProperty("id").GetInt64(),
-            element.GetProperty("ownerCode").GetString() ?? "?",
-            geometry);
+        return new Cell(element.GetProperty("id").GetInt64(), element.GetProperty("ownerCode").GetString() ?? "?", geometry);
     }
 
     static Geometry? ParseGeoJsonGeometry(JsonElement geometry)
     {
         if (geometry.ValueKind == JsonValueKind.Null) return null;
-        var type = geometry.GetProperty("type").GetString();
-        var coordinates = geometry.GetProperty("coordinates");
+        var type = geometry.GetProperty("type").GetString(); var coordinates = geometry.GetProperty("coordinates");
         if (type == "Polygon") return ParsePolygon(coordinates);
-        if (type == "MultiPolygon")
-            return Factory.CreateMultiPolygon(coordinates.EnumerateArray().Select(ParsePolygon).ToArray());
+        if (type == "MultiPolygon") return Factory.CreateMultiPolygon(coordinates.EnumerateArray().Select(ParsePolygon).ToArray());
         return null;
     }
 
     static Polygon ParsePolygon(JsonElement coordinates)
     {
-        var rings = coordinates.EnumerateArray()
-            .Select(ParseRing)
-            .Where(x => x is not null)
-            .Cast<LinearRing>()
-            .ToArray();
-        return rings.Length == 0
-            ? Factory.CreatePolygon()
-            : Factory.CreatePolygon(rings[0], rings.Skip(1).ToArray());
+        var rings = coordinates.EnumerateArray().Select(ParseRing).Where(x => x is not null).Cast<LinearRing>().ToArray();
+        return rings.Length == 0 ? Factory.CreatePolygon() : Factory.CreatePolygon(rings[0], rings.Skip(1).ToArray());
     }
 
     static LinearRing? ParseRing(JsonElement ring)
     {
-        var points = ring.EnumerateArray().Select(p =>
-        {
-            var xy = p.EnumerateArray().ToArray();
-            return new Coordinate(xy[0].GetDouble(), xy[1].GetDouble());
-        }).ToList();
+        var points = ring.EnumerateArray().Select(p => { var xy=p.EnumerateArray().ToArray(); return new Coordinate(xy[0].GetDouble(),xy[1].GetDouble()); }).ToList();
         if (points.Count < 3) return null;
         if (!points[0].Equals2D(points[^1])) points.Add(new Coordinate(points[0]));
         return points.Count < 4 ? null : Factory.CreateLinearRing(points.ToArray());
     }
 
-    static object LineToGeoJson(LineString line) => new
-    {
-        type = "LineString",
-        coordinates = line.Coordinates
-            .Select(c => new[] { Math.Round(c.X, 6), Math.Round(c.Y, 6) })
-            .ToArray()
-    };
-
-    static object MultiLineToGeoJson(IEnumerable<LineString> lines) => new
-    {
-        type = "MultiLineString",
-        coordinates = lines.Select(line => line.Coordinates
-            .Select(c => new[] { Math.Round(c.X, 6), Math.Round(c.Y, 6) })
-            .ToArray()).ToArray()
-    };
+    static object LineToGeoJson(LineString line) => new { type="LineString", coordinates=line.Coordinates.Select(c=>new[]{Math.Round(c.X,6),Math.Round(c.Y,6)}).ToArray() };
+    static object MultiLineToGeoJson(IEnumerable<LineString> lines) => new { type="MultiLineString", coordinates=lines.Select(line=>line.Coordinates.Select(c=>new[]{Math.Round(c.X,6),Math.Round(c.Y,6)}).ToArray()).ToArray() };
 }
