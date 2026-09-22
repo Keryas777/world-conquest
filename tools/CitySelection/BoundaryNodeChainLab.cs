@@ -20,10 +20,10 @@ static class BoundaryNodeChainLab
         using var document = JsonDocument.Parse(await File.ReadAllTextAsync(graphPath));
         var cells = document.RootElement.GetProperty("cells").EnumerateArray().Select(ParseCell).ToArray();
 
-        // C4.13 diagnostic: work from the stored cell geometry itself. A valid
-        // Voronoi junction is an endpoint of a same-owner shared edge that is also
-        // a vertex of a cell boundary segment shared with the opposite owner.
-        // No nearest-point projection and no distance threshold are used.
+        // C4.14 diagnostic: a valid Voronoi junction is an endpoint of a same-owner
+        // internal edge that lies on an actual BE-LU cross-owner boundary segment.
+        // It does not need to equal one of that segment's stored vertices. No
+        // nearest-point projection and no proximity threshold are used.
         const string ownerA = "BE";
         const string ownerB = "LU";
         const string pairKey = "BE-LU";
@@ -33,18 +33,18 @@ static class BoundaryNodeChainLab
         var regionA = SafeUnion(cellsA.Select(c => c.Geometry));
         var regionB = SafeUnion(cellsB.Select(c => c.Geometry));
         var borderComponents = MergeLines(EnumerateLines(SafeIntersection(regionA.Boundary, regionB.Boundary)));
-        if (borderComponents.Count == 0) throw new InvalidOperationException("C4.13: no BE-LU border component found.");
+        if (borderComponents.Count == 0) throw new InvalidOperationException("C4.14: no BE-LU border component found.");
 
         var internalEdges = BuildInternalEdges(cellsA).Concat(BuildInternalEdges(cellsB)).ToArray();
         var crossOwnerEdges = BuildCrossOwnerEdges(cellsA, cellsB).ToArray();
-        var crossVertices = crossOwnerEdges.SelectMany(e => e.Coordinates).ToArray();
         var raw = new List<Junction>();
         foreach (var edge in internalEdges)
         {
             if (edge.Line.NumPoints == 0) continue;
             foreach (var endpoint in new[] { edge.Line.GetCoordinateN(0), edge.Line.GetCoordinateN(edge.Line.NumPoints - 1) })
             {
-                if (crossVertices.Any(v => v.Equals2D(endpoint)))
+                var point = Factory.CreatePoint(new Coordinate(endpoint));
+                if (crossOwnerEdges.Any(borderEdge => borderEdge.Covers(point)))
                     raw.Add(new Junction(edge.OwnerCode, edge.CellA, edge.CellB, new Coordinate(endpoint), edge.Line));
             }
         }
@@ -68,12 +68,12 @@ static class BoundaryNodeChainLab
         var terminalCandidates = borderComponents.SelectMany(l=>new[]{l.GetCoordinateN(0),l.GetCoordinateN(l.NumPoints-1)}).ToArray();
         var terminalPair = FarthestPair(terminalCandidates);
         var terminals = terminalPair.Select((p,i)=>new{id=i+1,point=new[]{Math.Round(p.X,6),Math.Round(p.Y,6)}}).ToArray();
-        Console.WriteLine($"C4.13 {pairKey}: internal edges={internalEdges.Length}, cross-owner edges={crossOwnerEdges.Length}, true junctions={junctions.Length}, terminals={terminals.Length}.");
+        Console.WriteLine($"C4.14 {pairKey}: internal edges={internalEdges.Length}, cross-owner edges={crossOwnerEdges.Length}, true junctions={junctions.Length}, terminals={terminals.Length}.");
 
         var payload = new
         {
             status = "experimental",
-            description = "C4.13 diagnostic only. True BE-LU junctions are shared vertices between same-owner internal Voronoi edges and opposite-owner cell boundaries. No projection or distance threshold. Border terminals are reported separately.",
+            description = "C4.14 diagnostic only. True BE-LU junctions are same-owner internal Voronoi edge endpoints covered by an actual opposite-owner BE-LU boundary segment; the endpoint need not be a stored border vertex. No projection or distance threshold. Border terminals are reported separately.",
             targetOwners = new[] { ownerA, ownerB },
             pairCount = 1,
             pairs = new[]
