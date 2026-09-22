@@ -1,6 +1,5 @@
 using System.Text.Json;
 using NetTopologySuite.Geometries;
-using NetTopologySuite.Operation.Distance;
 using NetTopologySuite.Operation.Linemerge;
 using NetTopologySuite.Operation.OverlayNG;
 
@@ -8,7 +7,7 @@ static class BoundaryNodeChainLab
 {
     sealed record Cell(long Id, string OwnerCode, Geometry Geometry);
     sealed record InternalEdge(string OwnerCode, long CellA, long CellB, LineString Line);
-    sealed record Hit(string OwnerCode, long CellA, long CellB, Coordinate Endpoint, Coordinate BorderPoint, double DistanceKm, LineString Edge);
+    sealed record Junction(string OwnerCode, long CellA, long CellB, Coordinate Point, LineString Edge);
 
     static readonly GeometryFactory Factory =
         NetTopologySuite.NtsGeometryServices.Instance.CreateGeometryFactory(srid: 4326);
@@ -21,9 +20,10 @@ static class BoundaryNodeChainLab
         using var document = JsonDocument.Parse(await File.ReadAllTextAsync(graphPath));
         var cells = document.RootElement.GetProperty("cells").EnumerateArray().Select(ParseCell).ToArray();
 
-        // C4.12 diagnostic: an internal Voronoi endpoint must first terminate on
-        // its owner's exterior boundary. Only then do we test whether that exit is
-        // on the BE-LU border. This separates topology from simple visual proximity.
+        // C4.13 diagnostic: work from the stored cell geometry itself. A valid
+        // Voronoi junction is an endpoint of a same-owner shared edge that is also
+        // a vertex of a cell boundary segment shared with the opposite owner.
+        // No nearest-point projection and no distance threshold are used.
         const string ownerA = "BE";
         const string ownerB = "LU";
         const string pairKey = "BE-LU";
@@ -33,47 +33,47 @@ static class BoundaryNodeChainLab
         var regionA = SafeUnion(cellsA.Select(c => c.Geometry));
         var regionB = SafeUnion(cellsB.Select(c => c.Geometry));
         var borderComponents = MergeLines(EnumerateLines(SafeIntersection(regionA.Boundary, regionB.Boundary)));
-        if (borderComponents.Count == 0) throw new InvalidOperationException("C4.12: no BE-LU border component found.");
+        if (borderComponents.Count == 0) throw new InvalidOperationException("C4.13: no BE-LU border component found.");
 
-        var borderUnion = SafeUnion(borderComponents.Cast<Geometry>());
         var internalEdges = BuildInternalEdges(cellsA).Concat(BuildInternalEdges(cellsB)).ToArray();
-        var ownerBoundaries = new Dictionary<string, Geometry> { [ownerA] = regionA.Boundary, [ownerB] = regionB.Boundary };
-        var rawHits = new List<Hit>();
+        var crossOwnerEdges = BuildCrossOwnerEdges(cellsA, cellsB).ToArray();
+        var crossVertices = crossOwnerEdges.SelectMany(e => e.Coordinates).ToArray();
+        var raw = new List<Junction>();
         foreach (var edge in internalEdges)
         {
             if (edge.Line.NumPoints == 0) continue;
             foreach (var endpoint in new[] { edge.Line.GetCoordinateN(0), edge.Line.GetCoordinateN(edge.Line.NumPoints - 1) })
             {
-                var point = Factory.CreatePoint(new Coordinate(endpoint));
-                var ownerNearest = new DistanceOp(point, ownerBoundaries[edge.OwnerCode]).NearestPoints();
-                if (ownerNearest.Length < 2 || ApproxKm(endpoint, ownerNearest[1]) > 0.1) continue;
-                var borderNearest = new DistanceOp(point, borderUnion).NearestPoints();
-                if (borderNearest.Length < 2) continue;
-                rawHits.Add(new Hit(edge.OwnerCode, edge.CellA, edge.CellB, new Coordinate(endpoint), new Coordinate(borderNearest[1]), ApproxKm(endpoint, borderNearest[1]), edge.Line));
+                if (crossVertices.Any(v => v.Equals2D(endpoint)))
+                    raw.Add(new Junction(edge.OwnerCode, edge.CellA, edge.CellB, new Coordinate(endpoint), edge.Line));
             }
         }
 
-        // The pair association is deliberately exported with its distance. The 1 km
-        // guard only rejects exits on another side of the owner; it is applied after
-        // the owner-boundary topology test, not as the primary candidate detector.
-        var pairHits = rawHits.Where(h => h.DistanceKm <= 1.0).ToArray();
-        var groups = new List<List<Hit>>();
-        foreach (var hit in pairHits.OrderBy(h => h.BorderPoint.X).ThenBy(h => h.BorderPoint.Y))
+        var groups = new List<List<Junction>>();
+        foreach (var hit in raw.OrderBy(h => h.Point.X).ThenBy(h => h.Point.Y))
         {
-            var group = groups.FirstOrDefault(g => ApproxKm(g[0].BorderPoint, hit.BorderPoint) <= 0.1);
-            if (group is null) groups.Add(new List<Hit> { hit }); else group.Add(hit);
+            var group = groups.FirstOrDefault(g => g[0].Point.Equals2D(hit.Point));
+            if (group is null) groups.Add(new List<Junction>{hit}); else group.Add(hit);
         }
-        var junctions = groups.Select((group, index) =>
-        {
-            var r = group.OrderBy(h => h.DistanceKm).First();
-            return new { id=index+1, point=new[]{Math.Round(r.BorderPoint.X,6),Math.Round(r.BorderPoint.Y,6)}, endpoint=new[]{Math.Round(r.Endpoint.X,6),Math.Round(r.Endpoint.Y,6)}, distanceKm=Math.Round(r.DistanceKm,4), incidenceCount=group.Count, owners=group.Select(h=>h.OwnerCode).Distinct().OrderBy(x=>x).ToArray(), edges=group.Select(h=>new{owner=h.OwnerCode,cellA=h.CellA,cellB=h.CellB,geometry=LineToGeoJson(h.Edge)}).ToArray() };
-        }).OrderBy(j=>j.point[1]).ThenBy(j=>j.point[0]).ToArray();
-        Console.WriteLine($"C4.12 {pairKey}: inspected {internalEdges.Length} internal edge(s), owner-boundary exits={rawHits.Count}, BE-LU exits={pairHits.Length}, unique junctions={junctions.Length}.");
+        var junctions = groups.Select((group,index)=>new {
+            id=index+1,
+            point=new[]{Math.Round(group[0].Point.X,6),Math.Round(group[0].Point.Y,6)},
+            incidenceCount=group.Count,
+            owners=group.Select(h=>h.OwnerCode).Distinct().OrderBy(x=>x).ToArray(),
+            edges=group.Select(h=>new{owner=h.OwnerCode,cellA=h.CellA,cellB=h.CellB,geometry=LineToGeoJson(h.Edge)}).ToArray()
+        }).ToArray();
+
+        // Border terminals are independent of Voronoi junctions. For this diagnostic,
+        // take the two farthest endpoints among reconstructed BE-LU components.
+        var terminalCandidates = borderComponents.SelectMany(l=>new[]{l.GetCoordinateN(0),l.GetCoordinateN(l.NumPoints-1)}).ToArray();
+        var terminalPair = FarthestPair(terminalCandidates);
+        var terminals = terminalPair.Select((p,i)=>new{id=i+1,point=new[]{Math.Round(p.X,6),Math.Round(p.Y,6)}}).ToArray();
+        Console.WriteLine($"C4.13 {pairKey}: internal edges={internalEdges.Length}, cross-owner edges={crossOwnerEdges.Length}, true junctions={junctions.Length}, terminals={terminals.Length}.");
 
         var payload = new
         {
             status = "experimental",
-            description = "C4.12 diagnostic only. Same-owner Voronoi endpoints must first terminate on their owner exterior boundary, then are associated with BE-LU. No replacement frontier or territory surface modification.",
+            description = "C4.13 diagnostic only. True BE-LU junctions are shared vertices between same-owner internal Voronoi edges and opposite-owner cell boundaries. No projection or distance threshold. Border terminals are reported separately.",
             targetOwners = new[] { ownerA, ownerB },
             pairCount = 1,
             pairs = new[]
@@ -83,9 +83,10 @@ static class BoundaryNodeChainLab
                     pair = pairKey,
                     owners = new[] { ownerA, ownerB },
                     internalEdgeCount = internalEdges.Length,
-                    ownerBoundaryExitCount = rawHits.Count,
-                    pairExitCount = pairHits.Length,
-                    uniqueJunctionCount = junctions.Length,
+                    crossOwnerEdgeCount = crossOwnerEdges.Length,
+                    trueJunctionCount = junctions.Length,
+                    terminalCount = terminals.Length,
+                    terminals,
                     realBorderComponentCount = borderComponents.Count,
                     junctions,
                     components = borderComponents.Select(line => new
@@ -101,6 +102,25 @@ static class BoundaryNodeChainLab
         await File.WriteAllTextAsync(
             Path.Combine(outDir, "c4-boundary-node-chain-lab.json"),
             JsonSerializer.Serialize(payload));
+    }
+
+    static IEnumerable<LineString> BuildCrossOwnerEdges(IReadOnlyList<Cell> aCells, IReadOnlyList<Cell> bCells)
+    {
+        foreach (var a in aCells) foreach (var b in bCells)
+        {
+            if (!a.Geometry.EnvelopeInternal.Intersects(b.Geometry.EnvelopeInternal)) continue;
+            foreach (var line in EnumerateLines(SafeIntersection(a.Geometry.Boundary,b.Geometry.Boundary)))
+                if (!line.IsEmpty && line.Length > NodeTolerance) yield return line;
+        }
+    }
+
+    static Coordinate[] FarthestPair(IReadOnlyList<Coordinate> points)
+    {
+        if (points.Count < 2) return points.ToArray();
+        var best = new[]{points[0],points[1]}; var bestKm=-1.0;
+        for(var i=0;i<points.Count;i++) for(var j=i+1;j<points.Count;j++)
+        { var km=ApproxKm(points[i],points[j]); if(km>bestKm){bestKm=km;best=new[]{points[i],points[j]};} }
+        return best;
     }
 
     static IEnumerable<InternalEdge> BuildInternalEdges(IReadOnlyList<Cell> ownerCells)
