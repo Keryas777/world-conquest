@@ -21,10 +21,9 @@ static class BoundaryNodeChainLab
         using var document = JsonDocument.Parse(await File.ReadAllTextAsync(graphPath));
         var cells = document.RootElement.GetProperty("cells").EnumerateArray().Select(ParseCell).ToArray();
 
-        // C4.16 diagnostic only: identify whether the visible gap comes from country-
-        // constrained clipping. For each internal endpoint, measure distance to its
-        // own reconstructed owner boundary, the opposite owner boundary, and the
-        // actual shared BE-LU cross-owner edges. No geometry is modified.
+        // C4.17 experimental prototype: derive one canonical BE-LU border from the two
+        // independently clipped owner boundaries. The canonical line is diagnostic
+        // only: gameplay/cell geometry is not modified.
         const string ownerA = "BE";
         const string ownerB = "LU";
         const string pairKey = "BE-LU";
@@ -34,7 +33,16 @@ static class BoundaryNodeChainLab
         var regionA = SafeUnion(cellsA.Select(c => c.Geometry));
         var regionB = SafeUnion(cellsB.Select(c => c.Geometry));
         var borderComponents = MergeLines(EnumerateLines(SafeIntersection(regionA.Boundary, regionB.Boundary)));
-        if (borderComponents.Count == 0) throw new InvalidOperationException("C4.16: no BE-LU border component found.");
+        if (borderComponents.Count == 0) throw new InvalidOperationException("C4.17: no BE-LU border component found.");
+
+        // The two owner boundaries are already sub-metre apart at the interesting
+        // locations. Snap LU boundary vertices to the nearest BE boundary location
+        // only when they are within 2 metres, then intersect the snapped LU boundary
+        // with a 2 m buffer around BE. This tolerance reconciles source-coordinate
+        // noise; it is not a Voronoi-junction acceptance threshold.
+        const double canonicalToleranceKm = 0.002;
+        var canonicalBorder = BuildCanonicalBorder(regionA.Boundary, regionB.Boundary, canonicalToleranceKm);
+        var canonicalComponents = MergeLines(EnumerateLines(canonicalBorder));
 
         var internalEdges = BuildInternalEdges(cellsA).Concat(BuildInternalEdges(cellsB)).ToArray();
         var ownerRegions = new Dictionary<string, Geometry> { [ownerA] = regionA, [ownerB] = regionB };
@@ -52,6 +60,12 @@ static class BoundaryNodeChainLab
                         var borderPoint = pair.Length > 1 ? pair[1] : endpoint;
                         return new { borderEdge, borderPoint, distanceKm = ApproxKm(endpoint, borderPoint) };
                     }).OrderBy(x => x.distanceKm).First();
+                    var canonicalPair = canonicalComponents.Select(line =>
+                    {
+                        var pair = new DistanceOp(point, line).NearestPoints();
+                        var cp = pair.Length > 1 ? pair[1] : endpoint;
+                        return new { point = cp, km = ApproxKm(endpoint, cp) };
+                    }).OrderBy(x => x.km).FirstOrDefault();
                     var ownBoundary = ownerRegions[edge.OwnerCode].Boundary;
                     var oppositeCode = edge.OwnerCode == ownerA ? ownerB : ownerA;
                     var oppositeBoundary = ownerRegions[oppositeCode].Boundary;
@@ -73,6 +87,8 @@ static class BoundaryNodeChainLab
                         ownBoundaryDistanceMeters = Math.Round(ApproxKm(endpoint, ownPoint) * 1000.0, 3),
                         oppositeBoundaryPoint = new[] { Math.Round(oppositePoint.X, 9), Math.Round(oppositePoint.Y, 9) },
                         oppositeBoundaryDistanceMeters = Math.Round(ApproxKm(endpoint, oppositePoint) * 1000.0, 3),
+                        canonicalBorderPoint = canonicalPair is null ? null : new[] { Math.Round(canonicalPair.point.X, 9), Math.Round(canonicalPair.point.Y, 9) },
+                        canonicalBorderDistanceMeters = canonicalPair is null ? (double?)null : Math.Round(canonicalPair.km * 1000.0, 3),
                         exactCover = nearest.borderEdge.Covers(point),
                         edge = LineToGeoJson(edge.Line),
                         borderEdge = LineToGeoJson(nearest.borderEdge)
@@ -86,12 +102,12 @@ static class BoundaryNodeChainLab
         var terminalCandidates = borderComponents.SelectMany(l=>new[]{l.GetCoordinateN(0),l.GetCoordinateN(l.NumPoints-1)}).ToArray();
         var terminalPair = FarthestPair(terminalCandidates);
         var terminals = terminalPair.Select((p,i)=>new{id=i+1,point=new[]{Math.Round(p.X,6),Math.Round(p.Y,6)}}).ToArray();
-        Console.WriteLine($"C4.16 {pairKey}: internal edges={internalEdges.Length}, cross-owner edges={crossOwnerEdges.Length}, exported nearest endpoint diagnostics={endpointDiagnostics.Length}, terminals={terminals.Length}.");
+        Console.WriteLine($"C4.17 {pairKey}: internal edges={internalEdges.Length}, cross-owner edges={crossOwnerEdges.Length}, exported nearest endpoint diagnostics={endpointDiagnostics.Length}, terminals={terminals.Length}.");
 
         var payload = new
         {
             status = "experimental",
-            description = "C4.16 diagnostic only. Measures each internal Voronoi endpoint against its own owner boundary, the opposite owner boundary, and actual shared BE-LU edges to diagnose country-constrained clipping gaps. No geometry modification.",
+            description = "C4.17 experimental diagnostic. Builds a canonical BE-LU border by reconciling sub-2m disagreement between independently clipped owner boundaries, then measures Voronoi endpoints against it. No gameplay/cell geometry modification.",
             targetOwners = new[] { ownerA, ownerB },
             pairCount = 1,
             pairs = new[]
@@ -102,6 +118,8 @@ static class BoundaryNodeChainLab
                     owners = new[] { ownerA, ownerB },
                     internalEdgeCount = internalEdges.Length,
                     crossOwnerEdgeCount = crossOwnerEdges.Length,
+                    canonicalBorderComponentCount = canonicalComponents.Count,
+                    canonicalBorder = MultiLineToGeoJson(canonicalComponents),
                     diagnosticEndpointCount = endpointDiagnostics.Length,
                     endpointDiagnostics,
                     terminalCount = terminals.Length,
@@ -121,6 +139,35 @@ static class BoundaryNodeChainLab
         await File.WriteAllTextAsync(
             Path.Combine(outDir, "c4-boundary-node-chain-lab.json"),
             JsonSerializer.Serialize(payload));
+    }
+
+    static Geometry BuildCanonicalBorder(Geometry aBoundary, Geometry bBoundary, double toleranceKm)
+    {
+        // Snap coordinates of B onto A where disagreement is only source precision.
+        var editor = new NetTopologySuite.Geometries.Utilities.GeometryEditor(Factory);
+        var snappedB = editor.Edit(bBoundary, new SnapToBoundaryOperation(aBoundary, toleranceKm));
+        // Keep only the portion of the reconciled B boundary that is effectively on A.
+        var toleranceDegrees = toleranceKm / 110.57;
+        return SafeIntersection(snappedB, aBoundary.Buffer(toleranceDegrees));
+    }
+
+    sealed class SnapToBoundaryOperation : NetTopologySuite.Geometries.Utilities.GeometryEditor.CoordinateSequenceOperation
+    {
+        readonly Geometry _target; readonly double _toleranceKm;
+        public SnapToBoundaryOperation(Geometry target, double toleranceKm) { _target=target; _toleranceKm=toleranceKm; }
+        public override CoordinateSequence Edit(CoordinateSequence seq, Geometry geometry)
+        {
+            var copy = seq.Copy();
+            for (var i=0;i<copy.Count;i++)
+            {
+                var c = copy.GetCoordinate(i);
+                var p = Factory.CreatePoint(c);
+                var pair = new DistanceOp(p,_target).NearestPoints();
+                if (pair.Length>1 && ApproxKm(c,pair[1]) <= _toleranceKm)
+                { copy.SetX(i,pair[1].X); copy.SetY(i,pair[1].Y); }
+            }
+            return copy;
+        }
     }
 
     static IEnumerable<LineString> BuildCrossOwnerEdges(IReadOnlyList<Cell> aCells, IReadOnlyList<Cell> bCells)
