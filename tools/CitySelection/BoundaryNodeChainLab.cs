@@ -21,10 +21,10 @@ static class BoundaryNodeChainLab
         using var document = JsonDocument.Parse(await File.ReadAllTextAsync(graphPath));
         var cells = document.RootElement.GetProperty("cells").EnumerateArray().Select(ParseCell).ToArray();
 
-        // C4.15 diagnostic only: do not decide junction validity. Measure every internal
-        // edge endpoint against the actual BE-LU cross-owner edges and export the
-        // nearest pairs. This is intended to explain the visually touching central
-        // endpoint without introducing another detector or modifying geometry.
+        // C4.16 diagnostic only: identify whether the visible gap comes from country-
+        // constrained clipping. For each internal endpoint, measure distance to its
+        // own reconstructed owner boundary, the opposite owner boundary, and the
+        // actual shared BE-LU cross-owner edges. No geometry is modified.
         const string ownerA = "BE";
         const string ownerB = "LU";
         const string pairKey = "BE-LU";
@@ -34,9 +34,10 @@ static class BoundaryNodeChainLab
         var regionA = SafeUnion(cellsA.Select(c => c.Geometry));
         var regionB = SafeUnion(cellsB.Select(c => c.Geometry));
         var borderComponents = MergeLines(EnumerateLines(SafeIntersection(regionA.Boundary, regionB.Boundary)));
-        if (borderComponents.Count == 0) throw new InvalidOperationException("C4.15: no BE-LU border component found.");
+        if (borderComponents.Count == 0) throw new InvalidOperationException("C4.16: no BE-LU border component found.");
 
         var internalEdges = BuildInternalEdges(cellsA).Concat(BuildInternalEdges(cellsB)).ToArray();
+        var ownerRegions = new Dictionary<string, Geometry> { [ownerA] = regionA, [ownerB] = regionB };
         var crossOwnerEdges = BuildCrossOwnerEdges(cellsA, cellsB).ToArray();
         var endpointDiagnostics = internalEdges.SelectMany(edge =>
         {
@@ -51,15 +52,27 @@ static class BoundaryNodeChainLab
                         var borderPoint = pair.Length > 1 ? pair[1] : endpoint;
                         return new { borderEdge, borderPoint, distanceKm = ApproxKm(endpoint, borderPoint) };
                     }).OrderBy(x => x.distanceKm).First();
+                    var ownBoundary = ownerRegions[edge.OwnerCode].Boundary;
+                    var oppositeCode = edge.OwnerCode == ownerA ? ownerB : ownerA;
+                    var oppositeBoundary = ownerRegions[oppositeCode].Boundary;
+                    var ownPair = new DistanceOp(point, ownBoundary).NearestPoints();
+                    var oppositePair = new DistanceOp(point, oppositeBoundary).NearestPoints();
+                    var ownPoint = ownPair.Length > 1 ? ownPair[1] : endpoint;
+                    var oppositePoint = oppositePair.Length > 1 ? oppositePair[1] : endpoint;
                     return (object)new
                     {
                         owner = edge.OwnerCode,
+                        oppositeOwner = oppositeCode,
                         cellA = edge.CellA,
                         cellB = edge.CellB,
                         endpoint = new[] { Math.Round(endpoint.X, 9), Math.Round(endpoint.Y, 9) },
                         nearestBorderPoint = new[] { Math.Round(nearest.borderPoint.X, 9), Math.Round(nearest.borderPoint.Y, 9) },
                         distanceKm = Math.Round(nearest.distanceKm, 6),
                         distanceMeters = Math.Round(nearest.distanceKm * 1000.0, 3),
+                        ownBoundaryPoint = new[] { Math.Round(ownPoint.X, 9), Math.Round(ownPoint.Y, 9) },
+                        ownBoundaryDistanceMeters = Math.Round(ApproxKm(endpoint, ownPoint) * 1000.0, 3),
+                        oppositeBoundaryPoint = new[] { Math.Round(oppositePoint.X, 9), Math.Round(oppositePoint.Y, 9) },
+                        oppositeBoundaryDistanceMeters = Math.Round(ApproxKm(endpoint, oppositePoint) * 1000.0, 3),
                         exactCover = nearest.borderEdge.Covers(point),
                         edge = LineToGeoJson(edge.Line),
                         borderEdge = LineToGeoJson(nearest.borderEdge)
@@ -73,12 +86,12 @@ static class BoundaryNodeChainLab
         var terminalCandidates = borderComponents.SelectMany(l=>new[]{l.GetCoordinateN(0),l.GetCoordinateN(l.NumPoints-1)}).ToArray();
         var terminalPair = FarthestPair(terminalCandidates);
         var terminals = terminalPair.Select((p,i)=>new{id=i+1,point=new[]{Math.Round(p.X,6),Math.Round(p.Y,6)}}).ToArray();
-        Console.WriteLine($"C4.15 {pairKey}: internal edges={internalEdges.Length}, cross-owner edges={crossOwnerEdges.Length}, exported nearest endpoint diagnostics={endpointDiagnostics.Length}, terminals={terminals.Length}.");
+        Console.WriteLine($"C4.16 {pairKey}: internal edges={internalEdges.Length}, cross-owner edges={crossOwnerEdges.Length}, exported nearest endpoint diagnostics={endpointDiagnostics.Length}, terminals={terminals.Length}.");
 
         var payload = new
         {
             status = "experimental",
-            description = "C4.15 diagnostic only. Measures the nearest actual BE-LU cross-owner boundary segment for internal Voronoi endpoints. No junction decision, no snapping, no projection used to modify geometry.",
+            description = "C4.16 diagnostic only. Measures each internal Voronoi endpoint against its own owner boundary, the opposite owner boundary, and actual shared BE-LU edges to diagnose country-constrained clipping gaps. No geometry modification.",
             targetOwners = new[] { ownerA, ownerB },
             pairCount = 1,
             pairs = new[]
