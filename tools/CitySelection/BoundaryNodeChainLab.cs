@@ -1,5 +1,6 @@
 using System.Text.Json;
 using NetTopologySuite.Geometries;
+using NetTopologySuite.Operation.Distance;
 using NetTopologySuite.Operation.Linemerge;
 using NetTopologySuite.Operation.OverlayNG;
 
@@ -7,7 +8,7 @@ static class BoundaryNodeChainLab
 {
     sealed record Cell(long Id, string OwnerCode, Geometry Geometry);
     sealed record InternalEdge(string OwnerCode, long CellA, long CellB, LineString Line);
-    sealed record Hit(string OwnerCode, long CellA, long CellB, Coordinate Point, LineString Edge);
+    sealed record Hit(string OwnerCode, long CellA, long CellB, Coordinate Endpoint, Coordinate BorderPoint, double DistanceKm, LineString Edge);
 
     static readonly GeometryFactory Factory =
         NetTopologySuite.NtsGeometryServices.Instance.CreateGeometryFactory(srid: 4326);
@@ -20,10 +21,9 @@ static class BoundaryNodeChainLab
         using var document = JsonDocument.Parse(await File.ReadAllTextAsync(graphPath));
         var cells = document.RootElement.GetProperty("cells").EnumerateArray().Select(ParseCell).ToArray();
 
-        // C4.11 is diagnostic only. Instead of projecting nearby Voronoi endpoints
-        // onto the BE-LU border, intersect every same-owner internal Voronoi edge
-        // with the real reconstructed BE-LU border. Only exact geometric contacts
-        // are retained; no distance threshold and no replacement frontier are used.
+        // C4.12 diagnostic: an internal Voronoi endpoint must first terminate on
+        // its owner's exterior boundary. Only then do we test whether that exit is
+        // on the BE-LU border. This separates topology from simple visual proximity.
         const string ownerA = "BE";
         const string ownerB = "LU";
         const string pairKey = "BE-LU";
@@ -33,61 +33,47 @@ static class BoundaryNodeChainLab
         var regionA = SafeUnion(cellsA.Select(c => c.Geometry));
         var regionB = SafeUnion(cellsB.Select(c => c.Geometry));
         var borderComponents = MergeLines(EnumerateLines(SafeIntersection(regionA.Boundary, regionB.Boundary)));
-        if (borderComponents.Count == 0)
-            throw new InvalidOperationException("C4.11: no BE-LU border component found.");
+        if (borderComponents.Count == 0) throw new InvalidOperationException("C4.12: no BE-LU border component found.");
 
         var borderUnion = SafeUnion(borderComponents.Cast<Geometry>());
-        var internalEdges = BuildInternalEdges(cellsA)
-            .Concat(BuildInternalEdges(cellsB))
-            .ToArray();
-
+        var internalEdges = BuildInternalEdges(cellsA).Concat(BuildInternalEdges(cellsB)).ToArray();
+        var ownerBoundaries = new Dictionary<string, Geometry> { [ownerA] = regionA.Boundary, [ownerB] = regionB.Boundary };
         var rawHits = new List<Hit>();
         foreach (var edge in internalEdges)
         {
-            var intersection = SafeIntersection(edge.Line, borderUnion);
-            foreach (var point in EnumeratePointCoordinates(intersection))
-                rawHits.Add(new Hit(edge.OwnerCode, edge.CellA, edge.CellB, new Coordinate(point), edge.Line));
+            if (edge.Line.NumPoints == 0) continue;
+            foreach (var endpoint in new[] { edge.Line.GetCoordinateN(0), edge.Line.GetCoordinateN(edge.Line.NumPoints - 1) })
+            {
+                var point = Factory.CreatePoint(new Coordinate(endpoint));
+                var ownerNearest = new DistanceOp(point, ownerBoundaries[edge.OwnerCode]).NearestPoints();
+                if (ownerNearest.Length < 2 || ApproxKm(endpoint, ownerNearest[1]) > 0.1) continue;
+                var borderNearest = new DistanceOp(point, borderUnion).NearestPoints();
+                if (borderNearest.Length < 2) continue;
+                rawHits.Add(new Hit(edge.OwnerCode, edge.CellA, edge.CellB, new Coordinate(endpoint), new Coordinate(borderNearest[1]), ApproxKm(endpoint, borderNearest[1]), edge.Line));
+            }
         }
 
-        // A Voronoi vertex can be represented by several incident internal edges.
-        // Collapse coincident contacts so the diagnostic counts physical junctions,
-        // not edge incidences.
+        // The pair association is deliberately exported with its distance. The 1 km
+        // guard only rejects exits on another side of the owner; it is applied after
+        // the owner-boundary topology test, not as the primary candidate detector.
+        var pairHits = rawHits.Where(h => h.DistanceKm <= 1.0).ToArray();
         var groups = new List<List<Hit>>();
-        foreach (var hit in rawHits.OrderBy(h => h.Point.X).ThenBy(h => h.Point.Y))
+        foreach (var hit in pairHits.OrderBy(h => h.BorderPoint.X).ThenBy(h => h.BorderPoint.Y))
         {
-            var group = groups.FirstOrDefault(g => ApproxKm(g[0].Point, hit.Point) <= 0.01);
-            if (group is null)
-                groups.Add(new List<Hit> { hit });
-            else
-                group.Add(hit);
+            var group = groups.FirstOrDefault(g => ApproxKm(g[0].BorderPoint, hit.BorderPoint) <= 0.1);
+            if (group is null) groups.Add(new List<Hit> { hit }); else group.Add(hit);
         }
-
         var junctions = groups.Select((group, index) =>
         {
-            var x = group.Average(h => h.Point.X);
-            var y = group.Average(h => h.Point.Y);
-            return new
-            {
-                id = index + 1,
-                point = new[] { Math.Round(x, 6), Math.Round(y, 6) },
-                incidenceCount = group.Count,
-                owners = group.Select(h => h.OwnerCode).Distinct().OrderBy(x => x).ToArray(),
-                edges = group.Select(h => new
-                {
-                    owner = h.OwnerCode,
-                    cellA = h.CellA,
-                    cellB = h.CellB,
-                    geometry = LineToGeoJson(h.Edge)
-                }).ToArray()
-            };
-        }).ToArray();
-
-        Console.WriteLine($"C4.11 {pairKey}: inspected {internalEdges.Length} internal edge(s), exact incidences={rawHits.Count}, unique junctions={junctions.Length}.");
+            var r = group.OrderBy(h => h.DistanceKm).First();
+            return new { id=index+1, point=new[]{Math.Round(r.BorderPoint.X,6),Math.Round(r.BorderPoint.Y,6)}, endpoint=new[]{Math.Round(r.Endpoint.X,6),Math.Round(r.Endpoint.Y,6)}, distanceKm=Math.Round(r.DistanceKm,4), incidenceCount=group.Count, owners=group.Select(h=>h.OwnerCode).Distinct().OrderBy(x=>x).ToArray(), edges=group.Select(h=>new{owner=h.OwnerCode,cellA=h.CellA,cellB=h.CellB,geometry=LineToGeoJson(h.Edge)}).ToArray() };
+        }).OrderBy(j=>j.point[1]).ThenBy(j=>j.point[0]).ToArray();
+        Console.WriteLine($"C4.12 {pairKey}: inspected {internalEdges.Length} internal edge(s), owner-boundary exits={rawHits.Count}, BE-LU exits={pairHits.Length}, unique junctions={junctions.Length}.");
 
         var payload = new
         {
             status = "experimental",
-            description = "C4.11 diagnostic only. Exact geometric intersections between same-owner internal Voronoi edges (BE or LU) and the reconstructed BE-LU border. No projection, distance threshold, replacement frontier or territory surface modification.",
+            description = "C4.12 diagnostic only. Same-owner Voronoi endpoints must first terminate on their owner exterior boundary, then are associated with BE-LU. No replacement frontier or territory surface modification.",
             targetOwners = new[] { ownerA, ownerB },
             pairCount = 1,
             pairs = new[]
@@ -97,7 +83,8 @@ static class BoundaryNodeChainLab
                     pair = pairKey,
                     owners = new[] { ownerA, ownerB },
                     internalEdgeCount = internalEdges.Length,
-                    exactIncidenceCount = rawHits.Count,
+                    ownerBoundaryExitCount = rawHits.Count,
+                    pairExitCount = pairHits.Length,
                     uniqueJunctionCount = junctions.Length,
                     realBorderComponentCount = borderComponents.Count,
                     junctions,
