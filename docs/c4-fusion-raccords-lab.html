@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no"><title>World Conquest · C4.28 Raccords</title><style>
+:root{color-scheme:dark;font-family:system-ui,-apple-system,sans-serif}*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#111827;color:#f8fafc}#map{position:absolute;inset:0;background:#dce3e8;touch-action:none}svg{width:100%;height:100%;display:block}.panel{position:absolute;left:12px;right:12px;top:calc(10px + env(safe-area-inset-top));padding:12px 14px;border-radius:18px;background:rgba(15,23,42,.95);z-index:2;pointer-events:none}h1{margin:0 0 4px;font-size:17px}.sub{color:#cbd5e1;font-size:12px;line-height:1.35}.legend{position:absolute;left:12px;bottom:calc(10px + env(safe-area-inset-bottom));padding:9px 11px;border-radius:14px;background:rgba(15,23,42,.92);font-size:11px;line-height:1.55;z-index:2;pointer-events:none;max-width:72%}.controls{position:absolute;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));z-index:3;display:flex;flex-direction:column;gap:8px}.controls button{width:48px;height:48px;border:1px solid #64748b;border-radius:14px;background:rgba(15,23,42,.94);color:#fff;font-size:24px;font-weight:800}.cell{stroke:#f8fafc;stroke-width:1;vector-effect:non-scaling-stroke;fill-opacity:.72}.BE{fill:#a78bfa}.LU{fill:#bef264}.baseline{fill:none;stroke:#475569;stroke-width:3.2;vector-effect:non-scaling-stroke}.edge{fill:none;stroke:#f59e0b;stroke-width:2.8;vector-effect:non-scaling-stroke}.candidate{fill:#fde047;stroke:#111827;stroke-width:1.4;vector-effect:non-scaling-stroke}.terminal{fill:#22d3ee;stroke:#111827;stroke-width:1.4;vector-effect:non-scaling-stroke}.rank{fill:#111827;font-size:.016px;font-weight:900;text-anchor:middle;dominant-baseline:central}.info{fill:#111827;font-size:.014px;font-weight:800;paint-order:stroke;stroke:#fff;stroke-width:.004px;stroke-linejoin:round} .connection{fill:none;stroke:#ef4444;stroke-width:4.5;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}.switch{position:absolute;top:135px;left:12px;z-index:5;display:flex;gap:7px}.switch button{padding:10px 12px;border-radius:10px;background:#172238;color:white;border:1px solid #718096;font-weight:700}.switch button.active{background:#dc2626;border-color:#fecaca}.switch{flex-wrap:wrap;right:12px;top:135px}.switch button{font-size:12px;padding:9px}.tuning{top:225px!important} .tuning{position:absolute;top:190px;left:12px;right:12px;max-width:420px;z-index:5;padding:11px 14px;border-radius:14px;background:rgba(15,23,42,.95);font-size:13px}.tuning input{width:100%;accent-color:#ef4444;touch-action:pan-x}.tuning label{display:flex;justify-content:space-between;gap:10px}</style></head><body><div id="map"><svg id="svg" preserveAspectRatio="xMidYMid meet"><g id="viewport"></g></svg></div><div class="panel"><h1>WORLD CONQUEST · C4.28 RACCORDS</h1><div class="sub" id="summary">Chargement…</div></div><div class="legend">jaune = candidats #1/#3/#4 · orange = arête Voronoï complète<br>Rouge = raccord expérimental · schéma 1 : droites · schéma 2 : contour simplifié · aucune géométrie de jeu modifiée</div><div class="switch"><button id="ref40">Référence 40</button><button id="ref85">Référence 85</button><button id="strong">Renforcé</button><button id="protected">Angles protégés</button><button id="adaptive">Adaptatif</button><button id="straight">Droites</button><button id="fusion">Fusion #4/#1</button></div><div class="tuning" id="tuning">C4.28 : fusion expérimentale des raccords #4 et #1 sur le contour original. Les autres modes sont les témoins C4.27. Aucun déplacement de la frontière source ni modification du moteur. <span id="detailValue"></span></div><div class="controls"><button id="plus">+</button><button id="minus">−</button><button id="reset">⌂</button></div><script>
+(async()=>{const[data,graph]=await Promise.all([fetch('./c4-boundary-node-chain-lab.json',{cache:'no-store'}).then(r=>r.json()),fetch('./voronoi-graph.json',{cache:'no-store'}).then(r=>r.json())]);const svg=document.getElementById('svg'),v=document.getElementById('viewport'),NS='http://www.w3.org/2000/svg',cur=data.pairs[0],cells=(graph.cells||[]).filter(c=>['BE','LU'].includes(c.ownerCode)&&c.geometry);let view,initialView,pointers=new Map(),lastPinch=null;
+function path(coords,cls){if(!coords||coords.length<2)return;const p=document.createElementNS(NS,'path');p.setAttribute('d','M '+coords.map(x=>x[0]+' '+(-x[1])).join(' L '));p.setAttribute('class',cls);v.appendChild(p)}function poly(rs){return rs.map(r=>'M '+r.map(p=>p[0]+' '+(-p[1])).join(' L ')+' Z').join(' ')}function gp(g){if(g.type==='Polygon')return poly(g.coordinates||[]);if(g.type==='MultiPolygon')return(g.coordinates||[]).map(poly).join(' ');return''}function dot(x,cls,r){const c=document.createElementNS(NS,'circle');c.setAttribute('cx',x[0]);c.setAttribute('cy',-x[1]);c.setAttribute('r',r);c.setAttribute('class',cls);v.appendChild(c)}function text(x,y,s,cls,anchor='start'){const t=document.createElementNS(NS,'text');t.setAttribute('x',x);t.setAttribute('y',y);t.setAttribute('class',cls);t.setAttribute('text-anchor',anchor);t.textContent=s;v.appendChild(t)}
+function bounds(){const p=[];cur.components.forEach(c=>c.baseline.coordinates.forEach(x=>p.push(x)));const xs=p.map(x=>x[0]),ys=p.map(x=>x[1]);let a=Math.min(...xs),b=Math.min(...ys),c=Math.max(...xs),d=Math.max(...ys),q=Math.max(.035,Math.max(c-a,d-b)*.16);return[a-q,b-q,c+q,d+q]}function touch(g,b){let p=[];(function w(x){if(!Array.isArray(x))return;if(typeof x[0]==='number'){p.push(x);return}x.forEach(w)})(g.coordinates);let x=p.map(z=>z[0]),y=p.map(z=>z[1]);return p.length&&!(Math.max(...x)<b[0]||Math.min(...x)>b[2]||Math.max(...y)<b[1]||Math.min(...y)>b[3])}function hav(a,b){const R=6371000,rad=Math.PI/180,p1=a[1]*rad,p2=b[1]*rad,dp=(b[1]-a[1])*rad,dl=(b[0]-a[0])*rad,s=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;return 2*R*Math.atan2(Math.sqrt(s),Math.sqrt(1-s))}function edgeLength(q){let n=0;for(let i=1;i<q.length;i++)n+=hav(q[i-1],q[i]);return n}
+const b=bounds();initialView={x:b[0],y:-b[3],w:b[2]-b[0],h:b[3]-b[1]};view={...initialView};function applyView(){svg.setAttribute('viewBox',`${view.x} ${view.y} ${view.w} ${view.h}`)}function screenToWorld(cx,cy){const r=svg.getBoundingClientRect(),as=r.width/r.height,av=view.w/view.h;let dw=view.w,dh=view.h,ox=0,oy=0;if(as>av){dw=view.h*as;ox=(view.w-dw)/2}else{dh=view.w/as;oy=(view.h-dh)/2}return{x:view.x+ox+(cx-r.left)/r.width*dw,y:view.y+oy+(cy-r.top)/r.height*dh}}function zoomAt(f,cx,cy){const a=screenToWorld(cx,cy);view.w/=f;view.h/=f;const n=screenToWorld(cx,cy);view.x+=a.x-n.x;view.y+=a.y-n.y;applyView()}function reset(){view={...initialView};applyView()}applyView();cells.filter(c=>touch(c.geometry,b)).forEach(c=>{let p=document.createElementNS(NS,'path');p.setAttribute('d',gp(c.geometry));p.setAttribute('class','cell '+c.ownerCode);v.appendChild(p)});cur.components.forEach(c=>path(c.baseline.coordinates,'baseline'));
+const shortlist=(cur.endpointDiagnostics||[]).map((d,i)=>({...d,source:i+1})).filter(d=>[1,3,4].includes(d.source)).map(d=>({...d,edgeMeters:edgeLength(d.edge.coordinates||[])}));shortlist.forEach(d=>{path(d.edge.coordinates,'edge');dot(d.endpoint,'candidate',.009);text(d.endpoint[0],-d.endpoint[1],String(d.source),'rank','middle');text(d.endpoint[0]+.012,-d.endpoint[1]-.012,`#${d.source} · arête ${(d.edgeMeters/1000).toFixed(2)} km · bord ${d.distanceMeters.toFixed(1)} m`,'info')});(cur.terminals||[]).forEach(t=>dot(t.point,'terminal',.010));document.getElementById('summary').textContent='BE–LU · longueur des arêtes candidates : '+shortlist.map(d=>`#${d.source}: ${(d.edgeMeters/1000).toFixed(2)} km`).join(' · ');
+
+const joins=[cur.terminals[0].point,cur.endpointDiagnostics[2].endpoint,cur.endpointDiagnostics[3].endpoint,cur.endpointDiagnostics[0].endpoint,cur.terminals[1].point];
+// La frontière canonique est orientée sud→nord ; on échantillonne chaque sous-chemin dans son ordre réel.
+const border=cur.canonicalBorder.coordinates.flat();
+function nearestIndex(p){let best=0,dist=Infinity;for(let i=0;i<border.length;i++){let d=(border[i][0]-p[0])**2+(border[i][1]-p[1])**2;if(d<dist){dist=d;best=i}}return best}
+function pointDist(p,a,b){const x=b[0]-a[0],y=b[1]-a[1],l=x*x+y*y;if(!l)return Math.hypot(p[0]-a[0],p[1]-a[1]);let t=Math.max(0,Math.min(1,((p[0]-a[0])*x+(p[1]-a[1])*y)/l));return Math.hypot(p[0]-a[0]-t*x,p[1]-a[1]-t*y)}
+function simplify(q,tol){if(q.length<3)return q;let best=0,idx=0;for(let i=1;i<q.length-1;i++){let d=pointDist(q[i],q[0],q[q.length-1]);if(d>best){best=d;idx=i}}if(best<=tol)return[q[0],q[q.length-1]];return [...simplify(q.slice(0,idx+1),tol).slice(0,-1),...simplify(q.slice(idx),tol)]}
+
+
+const lat0=joins.reduce((v,p)=>v+p[1],0)/joins.length*Math.PI/180;
+function metres(p){return [p[0]*111320*Math.cos(lat0),p[1]*111320]}
+// C4.28 : trouver automatiquement un point de fusion SUR la polyligne frontière.
+// Le milieu curviligne est un repli déterministe ; si une inflexion intérieure
+// existe entre les raccords, préférer le sommet le plus rentrant côté LU.
+function pointInRing(p,ring){let inside=false;for(let i=0,j=ring.length-1;i<ring.length;j=i++){const a=ring[i],b=ring[j];if(((a[1]>p[1])!==(b[1]>p[1]))&&(p[0]<(b[0]-a[0])*(p[1]-a[1])/(b[1]-a[1])+a[0]))inside=!inside}return inside}
+function inLuxembourg(p){return cells.some(c=>c.ownerCode==='LU'&&(()=>{const g=c.geometry,polys=g.type==='Polygon'?[g.coordinates]:g.type==='MultiPolygon'?g.coordinates:[];return polys.some(poly=>pointInRing(p,poly[0])&&!poly.slice(1).some(h=>pointInRing(p,h)))})())}
+function fusionOnBorder(a,b){
+ const ia=nearestIndex(a),ib=nearestIndex(b),segment=ia<=ib?border.slice(ia,ib+1):border.slice(ib,ia+1).reverse();
+ if(segment.length<2)return {point:border[ia],kind:'repli sur sommet de frontière',valid:false};
+ const A=metres(a),B=metres(b),dx=B[0]-A[0],dy=B[1]-A[1],len=Math.hypot(dx,dy);
+ let side=0;
+ if(len>0){const m=[(A[0]+B[0])/2,(A[1]+B[1])/2],offset=1500;
+ const l=[(m[0]-dy/len*offset)/ (111320*Math.cos(lat0)),(m[1]+dx/len*offset)/111320];
+ const r=[(m[0]+dy/len*offset)/ (111320*Math.cos(lat0)),(m[1]-dx/len*offset)/111320];
+ if(inLuxembourg(l)!==inLuxembourg(r))side=inLuxembourg(l)?1:-1;
+ }
+ let best=null;
+ for(let i=1;i<segment.length-1;i++){
+  const p=metres(segment[i]),cross=len?((dx*(p[1]-A[1])-dy*(p[0]-A[0]))/len):0;
+  if(side*cross>0.01&&(!best||side*cross>best.depth))best={point:segment[i],depth:side*cross};
+ }
+ if(best)return {point:best.point,kind:'inflexion intérieure sur contour',valid:true,depth:best.depth};
+ let total=0;const lengths=[];for(let i=1;i<segment.length;i++){const d=hav(segment[i-1],segment[i]);lengths.push(d);total+=d}
+ let acc=0;for(let i=1;i<segment.length;i++){if(acc+lengths[i-1]>=total/2){const t=lengths[i-1]?((total/2-acc)/lengths[i-1]):0;return {point:[segment[i-1][0]*(1-t)+segment[i][0]*t,segment[i-1][1]*(1-t)+segment[i][1]*t],kind:'milieu curviligne sur contour',valid:true}}acc+=lengths[i-1]}
+ return {point:segment[0],kind:'sommet sur contour',valid:true};
+}
+const fusion=fusionOnBorder(joins[2],joins[3]);
+const fusionJoins=[joins[0],joins[1],fusion.point,joins[4]];
+function routesFor(points){return points.slice(0,-1).map((a,i)=>{const b=points[i+1],j=nearestIndex(a),k=nearestIndex(b);return [a,...(j<=k?border.slice(j,k+1):border.slice(k,j+1).reverse()),b]})}
+const rawRoutes=joins.slice(0,-1).map((a,i)=>{const b=joins[i+1],j=nearestIndex(a),k=nearestIndex(b);return [a,...(j<=k?border.slice(j,k+1):border.slice(k,j+1).reverse()),b]});
+
+function simplifyMetres(q,tol){if(q.length<3)return q;let best=0,idx=0;for(let i=1;i<q.length-1;i++){const d=pointDist(metres(q[i]),metres(q[0]),metres(q[q.length-1]));if(d>best){best=d;idx=i}}if(best<=tol)return[q[0],q[q.length-1]];return [...simplifyMetres(q.slice(0,idx+1),tol).slice(0,-1),...simplifyMetres(q.slice(idx),tol)]}
+function adaptive(q){
+ // Les grandes inflexions sont les points conservés par un premier passage métrique grossier.
+ // On les protège en simplifiant chaque portion entre deux inflexions.
+ const anchors=simplifyMetres(q,6500);let output=[];
+ for(let i=0;i<anchors.length-1;i++){
+  const from=q.indexOf(anchors[i]),to=q.indexOf(anchors[i+1]);
+  const segment=from>=0&&to>from?q.slice(from,to+1):[anchors[i],anchors[i+1]];
+  output.push(...simplifyMetres(segment,3800).slice(0,-1));
+ }
+ return [...output,q[q.length-1]];
+}
+
+// C4.27 : sur chaque segment conservé par le DP renforcé, rechercher le point
+// original de plus forte déviation. Un seul point est réintroduit si la déviation
+// atteint 60 % de la tolérance métrique. Aucune coordonnée BE–LU codée en dur.
+function protectCorners(q){
+ const base=simplifyMetres(q,10500),out=[base[0]];
+ let restored=0,maxBefore=0;
+ for(let i=0;i<base.length-1;i++){
+  const from=q.indexOf(base[i]),to=q.indexOf(base[i+1]);
+  if(from<0||to<=from){out.push(base[i+1]);continue}
+  const a=metres(base[i]),b=metres(base[i+1]);
+  let best=0,bestIndex=-1;
+  for(let j=from+1;j<to;j++){
+   const d=pointDist(metres(q[j]),a,b);
+   if(d>best){best=d;bestIndex=j}
+  }
+  maxBefore=Math.max(maxBefore,best);
+  if(bestIndex>=0&&best>=6300){out.push(q[bestIndex]);restored++}
+  out.push(base[i+1]);
+ }
+ return {points:out,restored,maxBefore};
+}
+const layer=document.createElementNS(NS,'g');layer.setAttribute('id','connections');v.appendChild(layer);
+function renderRoute(mode){
+ layer.replaceChildren();
+ const activeJoins=mode==='fusion'?fusionJoins:joins;const activeRoutes=mode==='fusion'?routesFor(fusionJoins):rawRoutes;
+ const diagnostics=mode==='protected'?activeRoutes.map(protectCorners):[];
+ const routes=mode==='straight'?null:activeRoutes.map((q,i)=>mode==='ref40'?simplify(q,.040):mode==='ref85'?simplify(q,.085):mode==='strong'||mode==='fusion'?simplifyMetres(q,10500):mode==='protected'?diagnostics[i].points:adaptive(q));
+ const coords=mode==='straight'?activeJoins:routes.flatMap(q=>q.slice(0,-1)).concat([activeJoins[activeJoins.length-1]]);
+ const line=document.createElementNS(NS,'path');line.setAttribute('class','connection');line.setAttribute('d','M '+coords.map(p=>p[0]+' '+(-p[1])).join(' L '));layer.appendChild(line);
+ if(mode==='fusion'){const mark=document.createElementNS(NS,'circle');mark.setAttribute('cx',fusion.point[0]);mark.setAttribute('cy',-fusion.point[1]);mark.setAttribute('r','.013');mark.setAttribute('fill','#22c55e');mark.setAttribute('stroke','#111827');mark.setAttribute('stroke-width','.003');layer.appendChild(mark)}
+ for(const id of ['ref40','ref85','strong','protected','adaptive','straight','fusion'])document.getElementById(id).classList.toggle('active',id===mode);
+ const labels={ref40:'Référence C4.24 · 40 (0,040°)',ref85:'Référence C4.24 · 85 (0,085°)',strong:'Renforcé · Douglas–Peucker métrique 10,5 km',protected:'Angles protégés · déviation ≥ 6,3 km',adaptive:'Adaptatif expérimental · grandes inflexions protégées',straight:'Raccords directs',fusion:'Fusion #4/#1 · '+fusion.kind+(fusion.valid?'':' (non valide)')};
+ document.getElementById('summary').textContent=labels[mode]+' · '+coords.length+' sommets'+(mode==='protected'?' · '+diagnostics.reduce((n,d)=>n+d.restored,0)+' inflexion(s) restaurée(s)':'');
+ document.getElementById('detailValue').textContent='Aucune règle mondiale validée';
+}
+for(const id of ['ref40','ref85','strong','protected','adaptive','straight','fusion'])document.getElementById(id).onclick=()=>renderRoute(id);
+renderRoute('fusion');
+svg.addEventListener('wheel',e=>{e.preventDefault();zoomAt(e.deltaY<0?1.2:1/1.2,e.clientX,e.clientY)},{passive:false});svg.addEventListener('pointerdown',e=>{pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});svg.setPointerCapture(e.pointerId);if(pointers.size===2){const a=[...pointers.values()];lastPinch={dist:Math.hypot(a[1].x-a[0].x,a[1].y-a[0].y)}}});svg.addEventListener('pointermove',e=>{const old=pointers.get(e.pointerId);if(!old)return;pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});if(pointers.size===1){const a=screenToWorld(old.x,old.y),n=screenToWorld(e.clientX,e.clientY);view.x+=a.x-n.x;view.y+=a.y-n.y;applyView()}else if(pointers.size===2){const a=[...pointers.values()],dist=Math.hypot(a[1].x-a[0].x,a[1].y-a[0].y),cx=(a[0].x+a[1].x)/2,cy=(a[0].y+a[1].y)/2;if(lastPinch&&lastPinch.dist>0)zoomAt(dist/lastPinch.dist,cx,cy);lastPinch={dist}}});function end(e){pointers.delete(e.pointerId);lastPinch=null}svg.addEventListener('pointerup',end);svg.addEventListener('pointercancel',end);document.getElementById('plus').onclick=()=>{const r=svg.getBoundingClientRect();zoomAt(1.5,r.left+r.width/2,r.top+r.height/2)};document.getElementById('minus').onclick=()=>{const r=svg.getBoundingClientRect();zoomAt(1/1.5,r.left+r.width/2,r.top+r.height/2)};document.getElementById('reset').onclick=reset;
+})().catch(e=>document.getElementById('summary').textContent='Erreur: '+e.message)</script></body></html>
