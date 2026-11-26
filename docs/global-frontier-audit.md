@@ -3,8 +3,8 @@
 ## Référence vérifiée
 
 - `main` vérifiée au 26 novembre 2026 : `e2e2ccae759f9902c1c099434b0ca1a046075a55`.
-- La PR #70 (« C4.28 — unifier le raccord #4/#1 dans tous les modes ») est fusionnée sur ce SHA. Aucune PR n’est ouverte pour la finalisation mondiale.
-- Le dépôt contient un outil console .NET 8 / NetTopologySuite 2.6.0 (`tools/CitySelection`). Il ne contient pas encore de solution moteur Godot/C#.
+- La PR #70 (« C4.28 — unifier le raccord #4/#1 dans tous les modes ») est fusionnée sur ce SHA. La PR #71, dédiée à la comparaison mondiale, est ouverte en brouillon et reste non fusionnée.
+- Le dépôt contient un outil console .NET 8 / NetTopologySuite 2.6.0 (`tools/CitySelection`) qui exécute maintenant un dépistage mondial expérimental. Il ne contient pas encore de solution moteur Godot/C#.
 - La donnée publiée `docs/voronoi-graph.json` contient **9 895 cellules**, **243 territoires**, **238 propriétaires**, **26 561 arêtes** et **3 477 arêtes interpropriétaires**, réparties en **341 couples de territoires propriétaires adjacents**.
 - `docs/world-selection-C.json` confirme lui aussi 9 895 villes dans 242 pays, plus le territoire géographique `XC`. La spécification jointe indique 9 894 cellules. Cette différence d’une cellule est antérieure au présent chantier et n’est pas corrigée par celui-ci.
 
@@ -39,7 +39,7 @@ Les historiques C4.17–C4.23 ont ajouté des diagnostics par distance, longueur
 
 C4.28 sélectionne les repères par leur rang dans cette liste locale (#1, #3, #4). Il choisit la jonction fusionnée en prenant l’inflexion la plus intérieure d’un segment de frontière ; à défaut, il prend son milieu curviligne. Il ne vérifie ni la redondance du graphe Voronoï, ni la conservation des adjacences après fusion. Le point est calculé sur la frontière source, sans déplacement systématique vers l’intérieur d’un territoire.
 
-Régression de périmètre identifiée : les vues C4.24–C4.28 restent des tracés superposés à des cellules existantes. Aucune ne reconstruit les cellules après simplification. Le C# courant ne porte donc pas encore l’algorithme de simplification mondiale demandé.
+Régression de périmètre identifiée : les vues C4.24–C4.28 restent des tracés superposés à des cellules existantes. Le C# de la PR #71 exécute les quatre simplificateurs sur les chaînes de frontières mondiales, mais ne reconstruit pas encore les cellules après simplification. Il ne s’agit donc pas encore de l’algorithme final ni d’une implémentation intégrée au moteur.
 
 ## Contrôle du workflow
 
@@ -53,35 +53,45 @@ La règle universelle de fusion reste ouverte. Une simple proximité n’autoris
 
 ## Résultats de la campagne mondiale exécutée
 
-Run GitHub Actions **45805525058**, commit `83b5056a437a31866845e31664a54fa5bd5f5c78` : build Release réussi, auto-tests synthétiques réussis et génération mondiale réussie. Les premiers échecs de CI ont révélé puis corrigé deux défauts du laboratoire : API indisponible en .NET 8 et récursion infinie pour les géométries ponctuelles. Le workflow final n’a ni régénéré la sélection des villes ni publié de fichiers dans `docs/`.
+Run GitHub Actions [**45808845771**](https://github.com/Keryas777/world-conquest/actions/runs/45808845771), commit `6fb46f404d0ea8c37c4fe8542cbb02c84dc7447f` : validation JavaScript, build Release .NET 8, auto-tests synthétiques, campagne mondiale et création de l’artifact de prévisualisation réussis. Le mode ciblé n’a pas régénéré la sélection des villes et n’a rien publié dans `docs/`. L’artifact contient `index.html`, `global-frontier-results.json` et la copie du graphe.
 
-Le graphe audité compte **9 895 cellules**, **243 territoires**, **238 codes propriétaires**, **26 561 arêtes** et **3 477 arêtes interpropriétaires**. Le dépistage a traité **341 couples territoriaux**, issus de **3 334 composants linéaires** et **70 595 sommets source**, représentant **214 310 km** de frontières extraites. Le traitement complet a pris **1,58 s** et le pic de mémoire du processus .NET a été **314 335 232 octets** (environ 300 MiB), sur le runner GitHub Actions.
+Le graphe contient **9 895 cellules**, **243 territoires**, **238 codes propriétaires**, **26 561 arêtes** et **3 477 arêtes interpropriétaires**. La campagne a traité **341 couples territoriaux**, **3 334 composants linéaires fusionnés**, **70 595 sommets** et **214 310 km** de lignes source. Elle a pris **2,034 s** au total ; le pic mémoire du processus était **319 123 456 octets** (environ 304 MiB) sur le runner GitHub Actions. Les 3 477 arêtes interpropriétaires ont toutes été examinées ; aucune exception d’intersection ni aucun repli de fusion de lignes n’a été compté.
 
-Les longueurs utilisent la distance haversine. L’écart source/sortie est la distance de chaque sommet source à la ligne simplifiée, dans une projection équirectangulaire locale par composant, corrigée par le cosinus de sa latitude moyenne. C’est un écart unidirectionnel sommet-vers-ligne, pas une distance de Hausdorff. Les tolérances de 0,040° et 0,085° restent exprimées en degrés. Les mesures ne décrivent donc pas encore une erreur surfacique ou topologique des cellules.
+Les longueurs utilisent la distance haversine. Les écarts de sommets sont calculés localement en tenant compte de la latitude, mais restent unidirectionnels sommet-vers-ligne, et non une distance de Hausdorff. Les méthodes Référence 40/85 reproduisent volontairement leurs tolérances historiques en degrés ; leur effet métrique varie donc avec la latitude. Les mesures ne décrivent pas encore l’erreur surfacique ou topologique des cellules.
 
 | Méthode | Sommets après (réduction) | Longueur après (réduction) | Écart moyen / maximum | Composants non simples ou invalides | Temps de simplification |
 |---|---:|---:|---:|---:|---:|
-| Référence 40 | 11 918 (83,12 %) | 202 526 km (−5,50 %) | 971 m / 4,45 km | 9 | 129 ms |
-| Référence 85 | 8 750 (87,61 %) | 194 346 km (−9,32 %) | 1,97 km / 9,43 km | 17 | 93 ms |
-| Angles protégés | 9 460 (86,60 %) | 196 410 km (−8,35 %) | 1,72 km / 16,09 km | 12 | 106 ms |
-| Adaptatif | 12 288 (82,59 %) | 203 220 km (−5,18 %) | 903 m / 3,80 km | 7 | 132 ms |
+| Référence 40 | 11 918 (83,12 %) | 202 526 km (−5,50 %) | 971 m / 4,45 km | 9 | 469 ms |
+| Référence 85 | 8 750 (87,61 %) | 194 346 km (−9,32 %) | 1,97 km / 9,43 km | 17 | 186 ms |
+| Mode historique « Angles protégés » | 9 460 (86,60 %) | 196 410 km (−8,35 %) | 1,72 km / 16,09 km | 12 | 209 ms |
+| Adaptatif | 12 288 (82,59 %) | 203 220 km (−5,18 %) | 903 m / 3,80 km | 7 | 302 ms |
 
-Les nombres de composants non simples/invalides portent sur les LineStrings de sortie, pas sur les cellules. Aucune variante ne produit zéro défaut de simplicité. Les comparaisons géométriques par coordonnées sont identiques pour les quatre méthodes sur **32/341** couples ; il existe au moins une divergence entre méthodes sur **309/341** couples. Par rapport à Référence 40, les sorties sont identiques pour Référence 85 sur 38 couples, Angles protégés sur 56 et Adaptatif sur 115.
+Les nombres de composants non simples/invalides portent sur les lignes de sortie, pas sur les cellules. Aucune variante n’obtient zéro composant non simple/invalide. Les quatre sorties sont exactement identiques par coordonnées sur **32/341** couples ; au moins deux méthodes divergent sur les **309** autres. Par rapport à Référence 40, Référence 85 est identique sur 38 couples, Angles protégés sur 56 et Adaptatif sur 115.
 
-Le cas BE–LU confirme que la reconstruction de la ligne source modifie le diagnostic : sur les 3 tracés C4.28, les quatre méthodes avaient donné exactement les mêmes coordonnées (6 sommets raccordés). Sur la frontière extraite des cellules du graphe, on obtient 7 composants et 100 sommets source ; Référence 40 produit 16 sommets, les trois autres 15, avec des coordonnées qui diffèrent. Les candidats de fusion mesurés comprennent deux rapprochements BE/LU séparés de 1,86 km et 4,40 km, issus de paires de cellules incidentes différentes. Aucun n’est fusionné.
+### Extrémités des segments source et jonctions candidates
 
-### Anomalies à traiter avant la reconstruction
+Le dépistage suit **70 575 extrémités de segments d’intersection source** (les points artificiels à ±180° sont exclus) jusqu’à la ligne simplifiée la plus proche. Ce sont des diagnostics de déplacement de ligne ; ils ne prouvent pas que chaque point est un raccord topologique indispensable. Le pourcentage à moins d’un mètre mesure la conservation de coordonnées d’extrémité, pas la conservation des adjacences des cellules.
 
-- **319 arêtes du graphe sur 3 477 n’ont pas d’intersection linéaire directe** entre les frontières des cellules ; elles concernent **156 couples territoriaux**. Le générateur existant accepte certaines adjacences par recouvrement de frontières tamponnées à environ un mètre. Le dépistage ne reconstruit pas ces 319 segments manquants : c’est un point de raccordement des données à résoudre avant de prétendre à un réseau mondial complet. Aucun overlay n’a échoué par exception.
-- La plus forte concentration d’arêtes sans intersection directe est **SL–SO (13)**, puis **CA–US (11)**, **TM–UZ (9)**, **RS–XK (9)** et **BJ–TG (8)**.
-- Les plus grands écarts mesurés sont Référence 40 sur **MN–RU (4,45 km)**, Référence 85 sur **CF–SS (9,43 km)**, Angles protégés sur **MN–RU (16,09 km)** et Adaptatif sur **IL–PS (3,80 km)**.
-- Le détecteur expérimental a relevé **1 002 extrémités** proches d’une frontière (936 transversales, 64 quasi parallèles et 2 courtes transversales), ainsi que **23 paires d’incidence à moins de 5 km**. Ces classes dépendent des seuils de dépistage et ne constituent pas une décision de fusion.
+| Méthode | Extrémités à ≤1 m | Extrémités à ≤100 m | Déplacement maximal d’une extrémité |
+|---|---:|---:|---:|
+| Référence 40 | 12 415 / 70 575 (17,59 %) | 17 430 (24,70 %) | 4,45 km |
+| Référence 85 | 9 138 / 70 575 (12,95 %) | 12 667 (17,95 %) | 10,92 km |
+| Angles protégés | 9 862 / 70 575 (13,97 %) | 13 727 (19,45 %) | 16,08 km |
+| Adaptatif | 12 794 / 70 575 (18,13 %) | 17 988 (25,49 %) | 3,83 km |
+
+Le détecteur séparé a repéré **1 002 extrémités d’arêtes internes** à moins de 500 m d’une frontière : 936 transversales, 64 quasi parallèles et 2 courtes transversales. Il a formé **23 paires proches à moins de 5 km** pour examen ; aucune fusion n’est appliquée. Distance, angle et longueur sont calculés dans une projection locale tenant compte de la latitude. Ces seuils sont expérimentaux. Pour BE–LU sur les géométries du graphe, deux rapprochements ressortent à 1,86 km et 4,40 km, avec des cellules incidentes différentes. Les coordonnées des trois variantes Référence 85, Angles protégés et Adaptatif sont identiques sur ce couple, tandis que Référence 40 diffère ; les quatre versions ne sont donc pas équivalentes sur la ligne extraite du graphe, malgré leur égalité exacte dans l’échantillon visuel C4.28.
+
+### Limites et anomalies mondiales
+
+- **319 arêtes sur 3 477** n’ont pas d’intersection linéaire directe entre les frontières des cellules, sur **156 couples**. Les plus fortes concentrations sont SL–SO (13), CA–US (11), RS–XK et TM–UZ (9 chacune), puis BJ–TG (8). Le dépistage n’a pas reconstruit ces morceaux manquants. Cette différence est cohérente avec le générateur qui accepte certaines adjacences par recouvrement de frontières tamponnées à environ un mètre ; il faut établir une source de frontière partagée fiable avant la reconstruction.
+- Les plus grands écarts sommet-source/ligne sont Référence 40 sur **MN–RU (4,45 km)**, Référence 85 sur **CF–SS (9,43 km)**, Angles protégés sur **MN–RU (16,09 km)** et Adaptatif sur **IL–PS (3,80 km)**. Le déplacement maximal des extrémités d’intersections source diffère légèrement de ces maxima, car il porte sur un autre ensemble de points.
+- Un essai strict préservant toutes les extrémités de chaque pièce source (run **45807827127**) a traité **67 261 pièces de deux sommets** et produit **0 % de réduction** pour les quatre méthodes. Cela montre qu’une simplification utile doit regrouper les chaînes et gérer explicitement le déplacement/raccordement des nœuds ; déplacer les nœuds sans reconstruire et retester le graphe reste dangereux.
+- La campagne n’a pas reconstruit de polygones ou cellules. Elle ne calcule pas les surfaces gagnées/perdues, la validité des cellules après reconstruction, les trous, chevauchements, côtes, îles, disparition de territoires, ni la conservation des adjacences et des jonctions multi-pays. Aucun chiffre de ce dépistage ne certifie ces invariants.
 
 ### Recommandation technique provisoire
 
-Pour la suite de l’expérimentation C#, **Adaptatif est le meilleur candidat à tester d’abord** : il conserve le plus de fidélité selon les mesures disponibles (écart moyen 903 m, maximum 3,80 km), réduit presque autant de sommets que Référence 40 et présente le plus petit nombre de composants non simples. Référence 85 réduit davantage les sommets mais déforme plus et produit plus de composants non simples. Angles protégés a le pire écart maximum et son intitulé ne correspond pas à son calcul réel.
+**Adaptatif reste le candidat à tester en premier**, uniquement comme orientation : il a le plus faible écart moyen et maximum parmi les mesures ligne-vers-source, le plus faible nombre de composants non simples/invalides et le meilleur maintien des extrémités dans ce dépistage. Il conserve toutefois seulement 18,13 % des extrémités à moins d’un mètre et ne passe aucun contrôle de reconstruction polygonale. Référence 85 simplifie davantage, mais a les plus fortes pertes de fidélité et le plus de composants non simples/invalides. Le mode historique « Angles protégés » restaure un point de forte déviation ; le code ne détecte pas les angles au sens géométrique.
 
-Cette recommandation reste une **orientation**, pas la sélection définitive demandée. Il manque la reconstruction des cellules, le contrôle des surfaces gagnées/perdues, l’inventaire des adjacences conservées/perdues et les vérifications monde entier de validité, trous, chevauchements, côtes, îles et territoires. La fusion universelle est également non définie. Ces contrôles sont prioritaires sur le gain de simplification.
+Cette orientation **ne sélectionne pas l’algorithme définitif**. Avant de choisir, il faut définir une construction commune des frontières partagées, reconstruire cellules et territoires, comparer séparément les surfaces gagnées et perdues, mesurer les adjacences perdues/ajoutées et valider la topologie à l’échelle mondiale. La règle universelle de fusion demeure non définie. Si les déplacements d’extrémités ne peuvent pas être reconnectés sans casser les cellules, l’adaptatif ne doit pas être retenu malgré ses mesures de lignes.
 
-Le viewer unique charge le graphe et le JSON mondial généré par le workflow, montre source et quatre variantes, et facilite l’accès aux couples ayant des contacts linéaires manquants, des composants non simples ou les plus forts écarts. En mode couple, il ne dessine que les cellules des deux territoires sélectionnés afin de réduire le travail du canvas. La compatibilité iOS a été préparée avec les événements tactiles Pointer Events et commandes accessibles, mais n’a pas été vérifiée sur un appareil Safari réel ; aucune validation manuelle iPhone n’a été demandée à ce stade.
-
+Le viewer unique (`docs/global-frontier-lab.html`) charge le graphe et le JSON générés par le workflow, affiche les cellules de référence, quatre méthodes, frontière source, diagnostics de jonctions et raccourcis vers les couples problématiques. En mode couple, seules les cellules des deux territoires sélectionnés sont dessinées. Le viewer a des commandes de zoom, pincement et déplacement tactile ; le JavaScript passe le contrôle syntaxique CI. Le viewer n’affiche pas encore de cellules reconstruites puisque le moteur ne les produit pas, et Safari iOS réel n’a pas été vérifié.
