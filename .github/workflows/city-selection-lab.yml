@@ -63,6 +63,19 @@ jobs:
           echo "global_only=$global_only" >> "$GITHUB_OUTPUT"
           echo "C4-only mode: $c4_only"
           echo "Frontier-only mode: $frontier_only"
+      - name: Validate global viewer JavaScript
+        if: steps.scope.outputs.global_only == 'true'
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          html = Path("docs/global-frontier-lab.html").read_text()
+          scripts = re.findall(r"<script>([\s\S]*?)</script>", html)
+          if len(scripts) != 1:
+              raise SystemExit(f"Expected one inline viewer script, found {len(scripts)}")
+          Path("/tmp/global-frontier-lab.js").write_text(scripts[0])
+          PY
+          node --check /tmp/global-frontier-lab.js
       - name: Build
         run: dotnet build tools/CitySelection/CitySelection.csproj --configuration Release
       - name: Run C4 boundary-node experiment only
