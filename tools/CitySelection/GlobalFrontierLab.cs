@@ -9,7 +9,7 @@ static class GlobalFrontierLab
 {
     private sealed record Cell(long Id, string Territory, string Owner, Geometry Geometry);
     private sealed record Edge(long A, long B, bool Foreign);
-    private sealed record BorderPair(string Key, string A, string B, int EdgeCount, LineString[] Lines);
+    private sealed record BorderPair(string Key, string A, string B, int EdgeCount, LineString[] Pieces, LineString[] Lines);
     private sealed record InternalEdge(string Territory, long CellA, long CellB, LineString Line, double LengthKm);
     private sealed record Junction(long CellA, long CellB, string Territory, Coordinate Endpoint,
         Coordinate BorderPoint, double DistanceMeters, double AngleDegrees, double EdgeLengthKm, string Classification);
@@ -59,7 +59,7 @@ static class GlobalFrontierLab
                 foreach (var line in EnumerateLines(shared))
                     if (!line.IsEmpty && line.Length > 1e-10)
                     {
-                        group.Pieces.Add(line);
+                        foreach (var piece in SplitAtAntimeridian(line)) group.Pieces.Add(piece);
                         group.SharedLineCount++;
                         found = true;
                     }
@@ -79,15 +79,17 @@ static class GlobalFrontierLab
         var pairs = groups.OrderBy(x => x.Key, StringComparer.Ordinal).Select(item =>
         {
             var merger = new LineMerger();
-            foreach (var piece in item.Value.Pieces) merger.Add(piece);
+            var pieces = item.Value.Pieces.OfType<LineString>()
+                .Where(line => !line.IsEmpty && line.NumPoints >= 2)
+                .ToArray();
+            foreach (var piece in pieces) merger.Add(piece);
             var lines = merger.GetMergedLineStrings().Cast<LineString>()
-                .SelectMany(SplitAtAntimeridian)
                 .Where(line => !line.IsEmpty && line.NumPoints >= 2)
                 .OrderBy(line => line.EnvelopeInternal.MinX)
                 .ThenBy(line => line.EnvelopeInternal.MinY)
                 .ThenByDescending(line => line.Length)
                 .ToArray();
-            return new BorderPair(item.Key, item.Value.A, item.Value.B, item.Value.Count, lines);
+            return new BorderPair(item.Key, item.Value.A, item.Value.B, item.Value.Count, pieces, lines);
         }).ToArray();
 
         var stopwatch = Stopwatch.StartNew();
@@ -108,9 +110,9 @@ static class GlobalFrontierLab
             var invalidLines = 0;
             foreach (var pair in pairs)
             {
-                var simplified = pair.Lines.Select(line => Simplify(line, method.Key)).ToArray();
+                var simplified = pair.Pieces.Select(line => Simplify(line, method.Key)).ToArray();
                 resultByPair.Add(simplified);
-                foreach (var line in pair.Lines)
+                foreach (var line in pair.Pieces)
                 {
                     inputVertices += line.NumPoints;
                     lengthsBefore.Add(LengthKm(line.Coordinates));
@@ -122,9 +124,9 @@ static class GlobalFrontierLab
                     if (!line.IsSimple || !line.IsValid) invalidLines++;
                 }
 
-                for (var i = 0; i < pair.Lines.Length; i++)
+                for (var i = 0; i < pair.Pieces.Length; i++)
                 {
-                    var stats = Deviation(pair.Lines[i], simplified[i]);
+                    var stats = Deviation(pair.Pieces[i], simplified[i]);
                     maxDeviation = Math.Max(maxDeviation, stats.MaxMeters);
                     deviationTotal += stats.SumMeters;
                     deviationSamples += stats.Samples;
@@ -161,9 +163,9 @@ static class GlobalFrontierLab
                     geometry = ToMultiLineGeoJson(lines),
                     vertexCount = lines.Sum(line => line.NumPoints),
                     lengthKm = lines.Sum(line => LengthKm(line.Coordinates)),
-                    maxDeviationMeters = pair.Lines.Select((line, index) => Deviation(line, lines[index]).MaxMeters).DefaultIfEmpty(0).Max(),
+                    maxDeviationMeters = pair.Pieces.Select((line, index) => Deviation(line, lines[index]).MaxMeters).DefaultIfEmpty(0).Max(),
                     nonSimpleLineComponentCount = lines.Count(line => !line.IsSimple || !line.IsValid),
-                    identicalToOriginal = GeometryCoordinatesEqual(pair.Lines, lines)
+                    identicalToOriginal = GeometryCoordinatesEqual(pair.Pieces, lines)
                 };
             }
 
@@ -177,7 +179,7 @@ static class GlobalFrontierLab
                 sharedLineIntersectionCount = groups[pair.Key].SharedLineCount,
                 missingSharedLineIntersectionCount = groups[pair.Key].MissingLineCount,
                 failedSharedLineIntersectionCount = groups[pair.Key].FailedCount,
-                sourceLineComponentCount = pair.Lines.Length,
+                sourceLineComponentCount = pair.Pieces.Length,
                 junctionDetection = new
                 {
                     endpointDistanceToleranceMeters = 500,
@@ -199,8 +201,8 @@ static class GlobalFrontierLab
                 source = new
                 {
                     geometry = ToMultiLineGeoJson(pair.Lines),
-                    vertexCount = pair.Lines.Sum(line => line.NumPoints),
-                    lengthKm = pair.Lines.Sum(line => LengthKm(line.Coordinates))
+                    vertexCount = pair.Pieces.Sum(line => line.NumPoints),
+                    lengthKm = pair.Pieces.Sum(line => LengthKm(line.Coordinates))
                 },
                 identicalMethodPairs = IdenticalMethodPairs(pairIndex, methodLines),
                 variants
@@ -358,7 +360,7 @@ static class GlobalFrontierLab
     private static (Coordinate Point, Point2 Tangent)? NearestBorderPoint(Coordinate point, IReadOnlyList<LineString> lines)
     {
         var latitude = point.Y * Math.PI / 180.0;
-        Point2 Project(Coordinate c) => new(c.X * 111320.0 * Math.Cos(latitude), c.Y * 111320.0);
+        Point2 Project(Coordinate c) => new(NormalizeLongitudeDelta(c.X - point.X) * 111320.0 * Math.Cos(latitude), (c.Y - point.Y) * 111320.0);
         var p = Project(point);
         var best = double.PositiveInfinity;
         Coordinate? closest = null;
@@ -395,7 +397,7 @@ static class GlobalFrontierLab
         var latitude = coordinates.Average(c => c.Y) * Math.PI / 180.0;
         var a = atStart ? coordinates[0] : coordinates[^2];
         var b = atStart ? coordinates[1] : coordinates[^1];
-        return new Point2((b.X - a.X) * 111320.0 * Math.Cos(latitude), (b.Y - a.Y) * 111320.0);
+        return new Point2(NormalizeLongitudeDelta(b.X - a.X) * 111320.0 * Math.Cos(latitude), (b.Y - a.Y) * 111320.0);
     }
 
     private static double AngleBetween(Point2 a, Point2 b)
@@ -443,6 +445,10 @@ static class GlobalFrontierLab
         if (seamParts.Length != 2 || seamParts[0].Coordinates[^1].X != 180.0 ||
             seamParts[1].Coordinates[0].X != -180.0)
             throw new InvalidOperationException("Global frontier self-test failed: antimeridian linework was not split consistently.");
+        var seamBorder = Factory.CreateLineString(new[] { new Coordinate(179.8, 0), new Coordinate(180, 0) });
+        var seamNearest = NearestBorderPoint(new Coordinate(-179.9, 0), new[] { seamBorder });
+        if (seamNearest is null || HaversineKm(new Coordinate(-179.9, 0), seamNearest.Value.Point) > 12.0)
+            throw new InvalidOperationException("Global frontier self-test failed: antimeridian junction lookup used the long way around.");
 
         Console.WriteLine("Global frontier self-tests passed: point-only geometry, endpoints, determinism, parameter separation and antimeridian handling.");
     }
