@@ -409,6 +409,9 @@ static class GlobalFrontierLab
 
     public static void RunSelfTests()
     {
+        var pointOnly = Factory.CreatePoint(new Coordinate(0, 0));
+        if (EnumerateLines(pointOnly).Any()) throw new InvalidOperationException("Point-only geometry must not recurse as linework.");
+
         var shortWiggle = Factory.CreateLineString(new[]
         {
             new Coordinate(0, 0), new Coordinate(.01, .0001), new Coordinate(.02, 0),
@@ -613,10 +616,21 @@ static class GlobalFrontierLab
 
     private static IEnumerable<LineString> EnumerateLines(Geometry geometry)
     {
-        if (geometry.IsEmpty) yield break;
-        if (geometry is LineString line) { yield return line; yield break; }
-        for (var i = 0; i < geometry.NumGeometries; i++)
-            foreach (var item in EnumerateLines(geometry.GetGeometryN(i))) yield return item;
+        var pending = new Stack<Geometry>();
+        pending.Push(geometry);
+        while (pending.Count > 0)
+        {
+            var current = pending.Pop();
+            if (current.IsEmpty) continue;
+            if (current is LineString line)
+            {
+                yield return line;
+                continue;
+            }
+            if (current is not GeometryCollection collection) continue;
+            for (var i = collection.NumGeometries - 1; i >= 0; i--)
+                pending.Push(collection.GetGeometryN(i));
+        }
     }
 
     private static IEnumerable<LineString> SplitAtAntimeridian(LineString line)
