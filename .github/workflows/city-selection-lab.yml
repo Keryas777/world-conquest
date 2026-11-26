@@ -9,12 +9,16 @@ on:
       - '.github/workflows/city-selection-lab.yml'
       - 'docs/hybrid-frontier-lab.html'
       - 'docs/c4-boundary-node-chain-lab.html'
+      - 'docs/global-frontier-lab.html'
+      - 'docs/global-frontier-audit.md'
   pull_request:
     paths:
       - 'tools/CitySelection/**'
       - '.github/workflows/city-selection-lab.yml'
       - 'docs/hybrid-frontier-lab.html'
       - 'docs/c4-boundary-node-chain-lab.html'
+      - 'docs/global-frontier-lab.html'
+      - 'docs/global-frontier-audit.md'
   workflow_dispatch:
 
 permissions:
@@ -41,6 +45,7 @@ jobs:
         run: |
           c4_only=false
           frontier_only=false
+          global_only=false
           if [[ "${{ github.event_name }}" == "pull_request" || "${{ github.event_name }}" == "push" ]]; then
             changed="$(git diff --name-only HEAD^ HEAD)"
             echo "Changed in ${{ github.event_name }}:"
@@ -49,10 +54,13 @@ jobs:
               c4_only=true
             elif [[ -n "$changed" ]] && ! echo "$changed" | grep -Ev '^(tools/CitySelection/(AdaptiveHybridFrontierLab|HybridFrontierLab)\.cs|docs/hybrid-frontier-lab\.html|\.github/workflows/city-selection-lab\.yml)$' >/dev/null; then
               frontier_only=true
+            elif [[ -n "$changed" ]] && ! echo "$changed" | grep -Ev '^(tools/CitySelection/(GlobalFrontierLab|Program)\.cs|docs/global-frontier-lab\.html|docs/global-frontier-audit\.md|\.github/workflows/city-selection-lab\.yml)$' >/dev/null; then
+              global_only=true
             fi
           fi
           echo "c4_only=$c4_only" >> "$GITHUB_OUTPUT"
           echo "frontier_only=$frontier_only" >> "$GITHUB_OUTPUT"
+          echo "global_only=$global_only" >> "$GITHUB_OUTPUT"
           echo "C4-only mode: $c4_only"
           echo "Frontier-only mode: $frontier_only"
       - name: Build
@@ -63,11 +71,14 @@ jobs:
       - name: Run frontier experiments only
         if: steps.scope.outputs.c4_only != 'true' && steps.scope.outputs.frontier_only == 'true'
         run: dotnet run --project tools/CitySelection/CitySelection.csproj --configuration Release -- --frontier-only
+      - name: Run global frontier screening only
+        if: steps.scope.outputs.global_only == 'true'
+        run: dotnet run --project tools/CitySelection/CitySelection.csproj --configuration Release -- --global-frontier-only
       - name: Run full city-selection experiments
-        if: steps.scope.outputs.c4_only != 'true' && steps.scope.outputs.frontier_only != 'true'
+        if: steps.scope.outputs.c4_only != 'true' && steps.scope.outputs.frontier_only != 'true' && steps.scope.outputs.global_only != 'true'
         run: dotnet run --project tools/CitySelection/CitySelection.csproj --configuration Release
       - name: Show report
-        if: steps.scope.outputs.c4_only != 'true' && steps.scope.outputs.frontier_only != 'true'
+        if: steps.scope.outputs.c4_only != 'true' && steps.scope.outputs.frontier_only != 'true' && steps.scope.outputs.global_only != 'true'
         run: cat data/generated/city-selection/report.md
       - name: Prepare C4 preview
         if: always() && github.event_name == 'pull_request' && steps.scope.outputs.c4_only == 'true'
@@ -81,12 +92,26 @@ jobs:
           mkdir -p data/generated/frontier-preview
           cp docs/hybrid-frontier-lab.html data/generated/frontier-preview/index.html
           cp data/generated/city-selection/hybrid-frontier-lab.json data/generated/frontier-preview/hybrid-frontier-lab.json
+      - name: Prepare global frontier preview
+        if: always() && github.event_name == 'pull_request' && steps.scope.outputs.global_only == 'true'
+        run: |
+          mkdir -p data/generated/global-frontier-preview
+          cp docs/global-frontier-lab.html data/generated/global-frontier-preview/index.html
+          cp docs/voronoi-graph.json data/generated/global-frontier-preview/voronoi-graph.json
+          test -f data/generated/city-selection/global-frontier-results.json && cp data/generated/city-selection/global-frontier-results.json data/generated/global-frontier-preview/global-frontier-results.json || true
       - name: Upload frontier preview
         if: always() && github.event_name == 'pull_request' && (steps.scope.outputs.c4_only == 'true' || steps.scope.outputs.frontier_only == 'true')
         uses: actions/upload-artifact@v4
         with:
           name: frontier-preview
           path: data/generated/frontier-preview/
+          if-no-files-found: error
+      - name: Upload global frontier preview
+        if: always() && github.event_name == 'pull_request' && steps.scope.outputs.global_only == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: global-frontier-preview
+          path: data/generated/global-frontier-preview/
           if-no-files-found: error
       - name: Publish generated C4 lab to docs
         if: github.event_name != 'pull_request' && steps.scope.outputs.c4_only == 'true'
@@ -115,7 +140,7 @@ jobs:
             git push
           fi
       - name: Publish generated frontier viewer to docs
-        if: github.event_name != 'pull_request' && steps.scope.outputs.c4_only != 'true' && steps.scope.outputs.frontier_only != 'true'
+        if: github.event_name != 'pull_request' && steps.scope.outputs.c4_only != 'true' && steps.scope.outputs.frontier_only != 'true' && steps.scope.outputs.global_only != 'true'
         run: |
           cp data/generated/city-selection/frontiers.html docs/frontiers.html
           cp data/generated/city-selection/frontier-graph.json docs/frontier-graph.json
@@ -134,9 +159,10 @@ jobs:
             git push
           fi
       - name: Upload generated selections
-        if: steps.scope.outputs.c4_only != 'true' && steps.scope.outputs.frontier_only != 'true'
+        if: steps.scope.outputs.c4_only != 'true' && steps.scope.outputs.frontier_only != 'true' && steps.scope.outputs.global_only != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: city-selection-results
           path: data/generated/city-selection/
           if-no-files-found: error
+

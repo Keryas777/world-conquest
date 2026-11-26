@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#101827">
+<title>World Conquest · Comparaison mondiale des frontières</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#101827;color:#f8fafc}*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden}#map{position:absolute;inset:0;background:#dbe4ea;touch-action:none}canvas{display:block;width:100%;height:100%;touch-action:none}.top{position:absolute;top:calc(8px + env(safe-area-inset-top));left:10px;right:10px;z-index:2;max-width:760px;padding:10px 12px;border:1px solid #475569;border-radius:14px;background:rgba(15,23,42,.96);box-shadow:0 5px 22px #0005}.title{font-size:15px;font-weight:800}.status{margin-top:3px;color:#cbd5e1;font-size:11px}.warning{color:#fbbf24}.toolbar{display:flex;gap:6px;align-items:center;overflow-x:auto;margin-top:8px;padding-bottom:2px;scrollbar-width:thin}.toolbar select,.toolbar button,.controls button{min-height:40px;border:1px solid #64748b;border-radius:10px;background:#1e293b;color:white;font:inherit}.toolbar select{padding:0 8px;flex:1;min-width:115px}.toolbar button{padding:0 10px;white-space:nowrap;font-size:12px;font-weight:700}.toolbar button.active{background:#b91c1c;border-color:#fecaca}.controls{position:absolute;right:10px;bottom:calc(10px + env(safe-area-inset-bottom));z-index:3;display:flex;flex-direction:column;gap:6px}.controls button{width:48px;height:48px;background:rgba(15,23,42,.96);font-size:22px;font-weight:800}.card{position:absolute;left:10px;bottom:calc(10px + env(safe-area-inset-bottom));z-index:2;max-width:min(72vw,460px);max-height:32vh;overflow:auto;padding:8px 10px;border:1px solid #64748b;border-radius:12px;background:rgba(15,23,42,.94);font-size:11px;line-height:1.4;pointer-events:none}.card strong{font-size:12px}.legend{color:#cbd5e1}.pair{color:#f8fafc}.measure{color:#cbd5e1}.fallback{position:absolute;inset:50% 20px auto;transform:translateY(-50%);z-index:4;text-align:center;padding:16px;border-radius:14px;background:#111827;color:#f8fafc}.hidden{display:none}@media(min-width:850px){.top{left:16px;right:auto}.card{left:auto;right:76px;bottom:16px;max-width:500px}.controls{right:16px;bottom:16px}}
+</style>
+</head>
+<body>
+<main id="map"><canvas id="canvas" aria-label="Carte mondiale des cellules et frontières territoriales"></canvas></main>
+<section class="top" aria-label="Commandes de comparaison">
+  <div class="title">WORLD CONQUEST · FRONTIÈRES MONDIALES</div>
+  <div class="status" id="status">Chargement des géométries…</div>
+  <div class="toolbar">
+    <button id="world" type="button" class="active">Monde</button>
+    <select id="pair" aria-label="Frontière à examiner"></select>
+    <button id="original" type="button">Originale</button>
+    <button id="ref40" type="button">40 · 0,040°</button>
+    <button id="ref85" type="button">85 · 0,085°</button>
+    <button id="protected" type="button">Angles protégés</button>
+    <button id="adaptive" type="button">Adaptatif</button>
+  </div>
+</section>
+<aside class="card" id="details" aria-live="polite"></aside>
+<div class="controls" aria-label="Commandes de zoom">
+  <button id="plus" type="button" aria-label="Zoom avant">+</button>
+  <button id="minus" type="button" aria-label="Zoom arrière">−</button>
+  <button id="fit" type="button" aria-label="Afficher le monde entier">⌂</button>
+</div>
+<div id="fallback" class="fallback hidden" role="status">Le jeu de résultats mondial est absent. Le générer avec le workflow « City selection lab » en mode global.</div>
+<script>
+(()=>{
+const canvas=document.getElementById('canvas'),ctx=canvas.getContext('2d',{alpha:false}),status=document.getElementById('status'),pairSelect=document.getElementById('pair'),details=document.getElementById('details'),fallback=document.getElementById('fallback');
+const methodIds=['original','ref40','ref85','protected','adaptive'];let graph,results,pairIndex=0,method='original',scope='world',view={x:-180,y:-90,w:360,h:180},fitView={...view},dpr=1,paths=[],cells=[];
+const colors=new Map();function color(code){if(!colors.has(code)){let h=0;for(const c of code)h=(h*31+c.charCodeAt(0))%360;colors.set(code,`hsl(${h} 44% 64%)`)}return colors.get(code)}
+function geometryPaths(g){const list=[];if(!g)return list;const polys=g.type==='Polygon'?[g.coordinates]:g.type==='MultiPolygon'?g.coordinates:[];for(const poly of polys)for(const ring of poly||[])if(ring.length>1)list.push(ring);return list}
+function resize(){const r=canvas.getBoundingClientRect();dpr=Math.min(2,window.devicePixelRatio||1);canvas.width=Math.max(1,Math.round(r.width*dpr));canvas.height=Math.max(1,Math.round(r.height*dpr));draw()}
+function screen(x,y){const w=canvas.clientWidth,h=canvas.clientHeight,scale=Math.min(w/view.w,h/view.h),ox=(w-view.w*scale)/2,oy=(h-view.h*scale)/2;return [ox+(x-view.x)*scale,oy+(view.y+view.h-y)*scale]}
+function drawRing(ring){let p=screen(ring[0][0],ring[0][1]);ctx.moveTo(p[0]*dpr,p[1]*dpr);for(let i=1;i<ring.length;i++){p=screen(ring[i][0],ring[i][1]);ctx.lineTo(p[0]*dpr,p[1]*dpr)}ctx.closePath()}
+function draw(){if(!graph||!results)return;ctx.setTransform(1,0,0,1,0,0);ctx.fillStyle='#dbe4ea';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.lineJoin='round';ctx.lineCap='round';
+ for(const c of cells){ctx.beginPath();for(const ring of geometryPaths(c.geometry))drawRing(ring);ctx.fillStyle=color(c.ownerCode||c.territoryCode||'');ctx.globalAlpha=.84;ctx.fill('evenodd');ctx.globalAlpha=1;ctx.strokeStyle='#ffffffb0';ctx.lineWidth=Math.max(.55,dpr*.55);ctx.stroke()}
+ const selected=scope==='world'?results.pairs:[results.pairs[pairIndex]];for(const pair of selected){if(!pair)continue;const g=method==='original'?pair.source.geometry:pair.variants[method]?.geometry;if(g){ctx.beginPath();for(const line of g.coordinates||[])if(line.length){let p=screen(line[0][0],line[0][1]);ctx.moveTo(p[0]*dpr,p[1]*dpr);for(let i=1;i<line.length;i++){p=screen(line[i][0],line[i][1]);ctx.lineTo(p[0]*dpr,p[1]*dpr)}}ctx.strokeStyle=method==='original'?'#334155':'#dc2626';ctx.lineWidth=Math.max(2.2,dpr*2.2);ctx.stroke()}}
+ if(scope==='pair'){const pair=results.pairs[pairIndex];for(const candidate of pair?.nearbyFusionCandidates||[]){let a=screen(candidate.a[0],candidate.a[1]),b=screen(candidate.b[0],candidate.b[1]);ctx.beginPath();ctx.setLineDash([5*dpr,4*dpr]);ctx.moveTo(a[0]*dpr,a[1]*dpr);ctx.lineTo(b[0]*dpr,b[1]*dpr);ctx.strokeStyle='#9333ea';ctx.lineWidth=2*dpr;ctx.stroke();ctx.setLineDash([])}for(const junction of pair?.junctions||[]){const p=screen(junction.borderPoint[0],junction.borderPoint[1]);ctx.beginPath();ctx.arc(p[0]*dpr,p[1]*dpr,4*dpr,0,Math.PI*2);ctx.fillStyle=junction.classification==='transverse'?'#06b6d4':junction.classification==='boundary-parallel'?'#f97316':'#eab308';ctx.fill();ctx.strokeStyle='#0f172a';ctx.lineWidth=1.5*dpr;ctx.stroke()}}
+ updateDetails(scope==='world'?null:results.pairs[pairIndex])
+}
+function num(x,d=1){return Number.isFinite(x)?x.toLocaleString('fr-FR',{maximumFractionDigits:d}):'—'}
+function updateDetails(pair){if(!pair){const m=method==='original'?null:results.methods[method],label=method==='original'?'Frontières source':m?.label||method;if(!m){details.innerHTML=`<strong>Vue mondiale · ${label}</strong><br><span class="measure">${results.source.cellCount.toLocaleString('fr-FR')} cellules de référence · ${results.source.territoryCount} territoires · ${results.pairs.length} couples de territoires</span><br><span class="warning">Les cellules affichées sont celles de référence.</span>`;return}details.innerHTML=`<strong>Vue mondiale · ${label}</strong><br><span class="measure">${num(m.outputVertices,0)} sommets · ${num(m.totalLengthAfterKm,1)} km · ${num(m.vertexReductionRatio*100,1)} % de sommets supprimés · écart max. ${num(m.maxDeviationMeters/1000,2)} km</span><br><span class="warning">Dépistage de lignes uniquement : les cellules affichées ne sont pas reconstruites.</span>`;return}const v=method==='original'?pair.source:pair.variants[method],label=method==='original'?'Frontière source':results.methods[method]?.label||method,j=pair.junctionSummary||{};details.innerHTML=`<strong class="pair">${pair.key} · ${label}</strong><br><span class="measure">${num(v.vertexCount,0)} sommets · ${num(v.lengthKm,1)} km${method==='original'?'':` · écart max. ${num(v.maxDeviationMeters/1000,2)} km`}</span><br><span class="legend">${pair.crossOwnerVoronoiEdgeCount} arêtes · ${j.transverse||0} jonctions transversales · ${j.boundaryParallel||0} arêtes quasi parallèles · ${j.nearbyDistinctIncidencePairs||0} rapprochements à examiner, aucune fusion appliquée</span>`}
+function bounds(g){const pts=[];for(const line of g?.coordinates||[])for(const p of line)pts.push(p);if(!pts.length)return null;const xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]);const x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys),pad=Math.max(.04,(Math.max(x1-x0,y1-y0)||.1)*.18);return{x:x0-pad,y:y0-pad,w:x1-x0+pad*2,h:y1-y0+pad*2}}
+function fitPair(){const p=results.pairs[pairIndex],g=method==='original'?p.source.geometry:p.variants[method].geometry,b=bounds(g);if(b)view=b;draw()}
+function setMethod(next){method=next;for(const id of methodIds)document.getElementById(id).classList.toggle('active',id===next);if(scope==='pair')fitPair();else draw()}
+pairSelect.addEventListener('change',()=>{pairIndex=Number(pairSelect.value);scope='pair';document.getElementById('world').classList.remove('active');fitPair()});
+document.getElementById('world').onclick=()=>{scope='world';view={...fitView};document.getElementById('world').classList.add('active');draw()};
+for(const id of methodIds)document.getElementById(id).addEventListener('click',()=>setMethod(id));
+document.getElementById('plus').onclick=()=>zoom(1.5);document.getElementById('minus').onclick=()=>zoom(1/1.5);document.getElementById('fit').onclick=()=>{view={...fitView};draw()};
+function zoom(f,cx=canvas.clientWidth/2,cy=canvas.clientHeight/2){const scale=Math.min(canvas.clientWidth/view.w,canvas.clientHeight/view.h),wx=view.x+(cx-(canvas.clientWidth-view.w*scale)/2)/scale,wy=view.y+view.h-(cy-(canvas.clientHeight-view.h*scale)/2)/scale;view.w/=f;view.h/=f;const nscale=Math.min(canvas.clientWidth/view.w,canvas.clientHeight/view.h);view.x=wx-(cx-(canvas.clientWidth-view.w*nscale)/2)/nscale;view.y=wy-view.h+(cy-(canvas.clientHeight-view.h*nscale)/2)/nscale;draw()}
+const pointers=new Map();let lastDistance=0,lastCenter=null;canvas.addEventListener('pointerdown',e=>{canvas.setPointerCapture(e.pointerId);pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});if(pointers.size===2){const a=[...pointers.values()];lastDistance=Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y);lastCenter={x:(a[0].x+a[1].x)/2,y:(a[0].y+a[1].y)/2}}});canvas.addEventListener('pointermove',e=>{if(!pointers.has(e.pointerId))return;const before=pointers.get(e.pointerId),dx=e.clientX-before.x,dy=e.clientY-before.y;pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});if(pointers.size>=2){const a=[...pointers.values()],distance=Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y),center={x:(a[0].x+a[1].x)/2,y:(a[0].y+a[1].y)/2};if(lastDistance>0)zoom(distance/lastDistance,center.x-canvas.getBoundingClientRect().left,center.y-canvas.getBoundingClientRect().top);if(lastCenter){const s=Math.min(canvas.clientWidth/view.w,canvas.clientHeight/view.h);view.x-=(center.x-lastCenter.x)/s;view.y+=(center.y-lastCenter.y)/s;draw()}lastDistance=distance;lastCenter=center}else{const s=Math.min(canvas.clientWidth/view.w,canvas.clientHeight/view.h);view.x-=dx/s;view.y+=dy/s;draw()}});function end(e){pointers.delete(e.pointerId);if(pointers.size<2){lastDistance=0;lastCenter=null}}canvas.addEventListener('pointerup',end);canvas.addEventListener('pointercancel',end);canvas.addEventListener('wheel',e=>{e.preventDefault();zoom(e.deltaY<0?1.15:1/1.15,e.offsetX,e.offsetY)},{passive:false});
+Promise.all([fetch('./voronoi-graph.json').then(r=>{if(!r.ok)throw Error('graph');return r.json()}),fetch('./global-frontier-results.json').then(r=>{if(!r.ok)throw Error('results');return r.json()})]).then(([g,r])=>{graph=g;results=r;cells=g.cells||[];paths=r.pairs||[];if(!paths.length)throw Error('empty');pairSelect.innerHTML=paths.map((p,i)=>`<option value="${i}">${p.key}</option>`).join('');pairIndex=0;method='original';scope='world';fitView={x:-180,y:-90,w:360,h:180};view={...fitView};status.textContent=`${cells.length.toLocaleString('fr-FR')} cellules · ${r.source.territoryCount} territoires · ${paths.length} frontières candidates`;resize();draw()}).catch(()=>{fallback.classList.remove('hidden');status.textContent='Données de comparaison indisponibles'});
+new ResizeObserver(resize).observe(canvas);
+})();
+</script>
+</body>
+</html>
+
