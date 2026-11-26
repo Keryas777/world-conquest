@@ -376,7 +376,7 @@ static class GlobalFrontierLab
                 if (length2 <= 1e-12) continue;
                 var t = Math.Clamp(((p.X - a.X) * dx + (p.Y - a.Y) * dy) / length2, 0.0, 1.0);
                 var projected = new Point2(a.X + t * dx, a.Y + t * dy);
-                var distance = Math.Hypot(p.X - projected.X, p.Y - projected.Y);
+                var distance = Math.Sqrt(Square(p.X - projected.X) + Square(p.Y - projected.Y));
                 if (distance >= best) continue;
                 best = distance;
                 closest = new Coordinate(
@@ -385,7 +385,8 @@ static class GlobalFrontierLab
                 tangent = new Point2(dx, dy);
             }
         }
-        return closest is null ? null : (closest, tangent);
+        if (closest is null) return null;
+        return (closest, tangent);
     }
 
     private static Point2 EndpointTangent(LineString line, bool atStart)
@@ -399,8 +400,8 @@ static class GlobalFrontierLab
 
     private static double AngleBetween(Point2 a, Point2 b)
     {
-        var na = Math.Hypot(a.X, a.Y);
-        var nb = Math.Hypot(b.X, b.Y);
+        var na = Math.Sqrt(Square(a.X) + Square(a.Y));
+        var nb = Math.Sqrt(Square(b.X) + Square(b.Y));
         if (na <= 1e-12 || nb <= 1e-12) return 0;
         var cosine = Math.Clamp(Math.Abs((a.X * b.X + a.Y * b.Y) / (na * nb)), 0.0, 1.0);
         return Math.Acos(cosine) * 180.0 / Math.PI;
@@ -554,10 +555,12 @@ static class GlobalFrontierLab
         var dx = b.X - a.X;
         var dy = b.Y - a.Y;
         var length2 = dx * dx + dy * dy;
-        if (length2 == 0) return Math.Hypot(p.X - a.X, p.Y - a.Y);
+        if (length2 == 0) return Math.Sqrt(Square(p.X - a.X) + Square(p.Y - a.Y));
         var t = Math.Clamp(((p.X - a.X) * dx + (p.Y - a.Y) * dy) / length2, 0.0, 1.0);
-        return Math.Hypot(p.X - a.X - t * dx, p.Y - a.Y - t * dy);
+        return Math.Sqrt(Square(p.X - a.X - t * dx) + Square(p.Y - a.Y - t * dy));
     }
+
+    private static double Square(double value) => value * value;
 
     private static double LengthKm(IReadOnlyList<Coordinate> coordinates)
     {
