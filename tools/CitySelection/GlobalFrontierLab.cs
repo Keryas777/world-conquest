@@ -10,7 +10,7 @@ static class GlobalFrontierLab
     private sealed record Cell(long Id, string Territory, string Owner, Geometry Geometry);
     private sealed record Edge(long A, long B, bool Foreign);
     private sealed record BorderPair(string Key, string A, string B, int EdgeCount, LineString[] Pieces,
-        LineString[] JunctionChains, Coordinate[] JunctionEndpoints);
+        LineString[] JunctionChains, Coordinate[] JunctionEndpoints, bool LineMergeFallback);
     private sealed record InternalEdge(string Territory, long CellA, long CellB, LineString Line, double LengthKm);
     private sealed record Junction(long CellA, long CellB, string Territory, Coordinate Endpoint,
         Coordinate BorderPoint, double DistanceMeters, double AngleDegrees, double EdgeLengthKm, string Classification);
@@ -84,13 +84,15 @@ static class GlobalFrontierLab
                 .Where(line => !line.IsEmpty && line.NumPoints >= 2)
                 .ToArray();
             foreach (var piece in pieces) merger.Add(piece);
-            var lines = merger.GetMergedLineStrings().Cast<LineString>()
+            var mergedLines = merger.GetMergedLineStrings().Cast<LineString>()
                 .SelectMany(SplitAtAntimeridian)
                 .Where(line => !line.IsEmpty && line.NumPoints >= 2)
                 .OrderBy(line => line.EnvelopeInternal.MinX)
                 .ThenBy(line => line.EnvelopeInternal.MinY)
                 .ThenByDescending(line => line.Length)
                 .ToArray();
+            var lineMergeFallback = mergedLines.Length == 0 && pieces.Length > 0;
+            var lines = lineMergeFallback ? pieces : mergedLines;
             var endpointMap = new Dictionary<string, Coordinate>(StringComparer.Ordinal);
             foreach (var piece in pieces)
             foreach (var endpoint in new[] { piece.Coordinates[0], piece.Coordinates[^1] })
@@ -99,7 +101,7 @@ static class GlobalFrontierLab
                 endpointMap.TryAdd($"{endpoint.X:R},{endpoint.Y:R}", new Coordinate(endpoint));
             }
             var junctionEndpoints = endpointMap.OrderBy(x => x.Key, StringComparer.Ordinal).Select(x => x.Value).ToArray();
-            return new BorderPair(item.Key, item.Value.A, item.Value.B, item.Value.Count, pieces, lines, junctionEndpoints);
+            return new BorderPair(item.Key, item.Value.A, item.Value.B, item.Value.Count, pieces, lines, junctionEndpoints, lineMergeFallback);
         }).ToArray();
 
         var stopwatch = Stopwatch.StartNew();
@@ -151,7 +153,7 @@ static class GlobalFrontierLab
                 junctionEndpointCount += retention.EndpointCount;
                 junctionEndpointsWithinOneMeter += retention.WithinOneMeter;
                 junctionEndpointsWithinHundredMeters += retention.WithinHundredMeters;
-                maximumJunctionDisplacementMeters = Math.Max(maximumJunctionDisplacementMeters, retention.MaximumDisplacementMeters);
+                maximumJunctionDisplacementMeters = Math.Max(maximumJunctionDisplacementMeters, retention.MaximumDisplacementMeters ?? 0);
             }
             methodWatch.Stop();
             methodLines[method.Key] = resultByPair;
@@ -211,6 +213,7 @@ static class GlobalFrontierLab
                 sharedLineIntersectionCount = groups[pair.Key].SharedLineCount,
                 missingSharedLineIntersectionCount = groups[pair.Key].MissingLineCount,
                 failedSharedLineIntersectionCount = groups[pair.Key].FailedCount,
+                sourceLineMergeFallback = pair.LineMergeFallback,
                 sourceLineComponentCount = pair.JunctionChains.Length,
                 junctionDetection = new
                 {
@@ -284,19 +287,21 @@ static class GlobalFrontierLab
     }
 
     private sealed record JunctionRetention(int EndpointCount, int WithinOneMeter,
-        int WithinHundredMeters, double MaximumDisplacementMeters);
+        int WithinHundredMeters, double? MaximumDisplacementMeters);
 
     private static JunctionRetention MeasureJunctionRetention(IReadOnlyList<Coordinate> endpoints,
         IReadOnlyList<LineString> simplifiedLines)
     {
         if (endpoints.Count == 0) return new JunctionRetention(0, 0, 0, 0);
+        if (simplifiedLines.Count == 0) return new JunctionRetention(endpoints.Count, 0, 0, null);
         var oneMeter = 0;
         var hundredMeters = 0;
         var maximum = 0.0;
         foreach (var endpoint in endpoints)
         {
             var nearest = NearestBorderPoint(endpoint, simplifiedLines);
-            var distance = nearest is null ? double.PositiveInfinity : HaversineKm(endpoint, nearest.Value.Point) * 1000.0;
+            if (nearest is null) return new JunctionRetention(endpoints.Count, 0, 0, null);
+            var distance = HaversineKm(endpoint, nearest.Value.Point) * 1000.0;
             if (distance <= 1.0) oneMeter++;
             if (distance <= 100.0) hundredMeters++;
             maximum = Math.Max(maximum, distance);
