@@ -53,18 +53,18 @@ La règle universelle de fusion reste ouverte. Une simple proximité n’autoris
 
 ## Résultats de la campagne mondiale exécutée
 
-Run GitHub Actions [**45808845771**](https://github.com/Keryas777/world-conquest/actions/runs/45808845771), commit `6fb46f404d0ea8c37c4fe8542cbb02c84dc7447f` : validation JavaScript, build Release .NET 8, auto-tests synthétiques, campagne mondiale et création de l’artifact de prévisualisation réussis. Le mode ciblé n’a pas régénéré la sélection des villes et n’a rien publié dans `docs/`. L’artifact contient `index.html`, `global-frontier-results.json` et la copie du graphe.
+Run GitHub Actions [**45810382644**](https://github.com/Keryas777/world-conquest/actions/runs/45810382644), commit `e7edbd7e54970aeab6c12da3c228b9c3ec5bdfea` : validation JavaScript, build Release .NET 8, auto-tests synthétiques, campagne mondiale et création de l’artifact de prévisualisation réussis. Le mode ciblé n’a pas régénéré la sélection des villes et n’a rien publié dans `docs/`. L’artifact contient `index.html`, `global-frontier-results.json` et la copie du graphe.
 
-Le graphe contient **9 895 cellules**, **243 territoires**, **238 codes propriétaires**, **26 561 arêtes** et **3 477 arêtes interpropriétaires**. La campagne a traité **341 couples territoriaux**, **3 334 composants linéaires fusionnés**, **70 595 sommets** et **214 310 km** de lignes source. Elle a pris **2,034 s** au total ; le pic mémoire du processus était **319 123 456 octets** (environ 304 MiB) sur le runner GitHub Actions. Les 3 477 arêtes interpropriétaires ont toutes été examinées ; aucune exception d’intersection ni aucun repli de fusion de lignes n’a été compté.
+Le graphe contient **9 895 cellules**, **243 territoires**, **238 codes propriétaires**, **26 561 arêtes** et **3 477 arêtes interpropriétaires**. La campagne a traité **341 couples territoriaux**, **3 334 composants linéaires fusionnés**, **70 595 sommets** et **214 310 km** de lignes source. Elle a pris **1,690 s** au total ; le pic mémoire du processus était **383 479 808 octets** (environ 366 MiB) sur le runner GitHub Actions. Les 3 477 arêtes interpropriétaires ont toutes été examinées ; aucune exception d’intersection ni aucun repli de fusion de lignes n’a été compté.
 
 Les longueurs utilisent la distance haversine. Les écarts de sommets sont calculés localement en tenant compte de la latitude, mais restent unidirectionnels sommet-vers-ligne, et non une distance de Hausdorff. Les méthodes Référence 40/85 reproduisent volontairement leurs tolérances historiques en degrés ; leur effet métrique varie donc avec la latitude. Les mesures ne décrivent pas encore l’erreur surfacique ou topologique des cellules.
 
 | Méthode | Sommets après (réduction) | Longueur après (réduction) | Écart moyen / maximum | Composants non simples ou invalides | Temps de simplification |
 |---|---:|---:|---:|---:|---:|
-| Référence 40 | 11 918 (83,12 %) | 202 526 km (−5,50 %) | 971 m / 4,45 km | 9 | 469 ms |
-| Référence 85 | 8 750 (87,61 %) | 194 346 km (−9,32 %) | 1,97 km / 9,43 km | 17 | 186 ms |
-| Mode historique « Angles protégés » | 9 460 (86,60 %) | 196 410 km (−8,35 %) | 1,72 km / 16,09 km | 12 | 209 ms |
-| Adaptatif | 12 288 (82,59 %) | 203 220 km (−5,18 %) | 903 m / 3,80 km | 7 | 302 ms |
+| Référence 40 | 11 918 (83,12 %) | 202 526 km (−5,50 %) | 971 m / 4,45 km | 9 | 372 ms |
+| Référence 85 | 8 750 (87,61 %) | 194 346 km (−9,32 %) | 1,97 km / 9,43 km | 17 | 156 ms |
+| Mode historique « Angles protégés » | 9 460 (86,60 %) | 196 410 km (−8,35 %) | 1,72 km / 16,09 km | 12 | 146 ms |
+| Adaptatif | 12 288 (82,59 %) | 203 220 km (−5,18 %) | 903 m / 3,80 km | 7 | 213 ms |
 
 Les nombres de composants non simples/invalides portent sur les lignes de sortie, pas sur les cellules. Aucune variante n’obtient zéro composant non simple/invalide. Les quatre sorties sont exactement identiques par coordonnées sur **32/341** couples ; au moins deux méthodes divergent sur les **309** autres. Par rapport à Référence 40, Référence 85 est identique sur 38 couples, Angles protégés sur 56 et Adaptatif sur 115.
 
