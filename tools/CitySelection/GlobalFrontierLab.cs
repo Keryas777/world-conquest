@@ -9,7 +9,8 @@ static class GlobalFrontierLab
 {
     private sealed record Cell(long Id, string Territory, string Owner, Geometry Geometry);
     private sealed record Edge(long A, long B, bool Foreign);
-    private sealed record BorderPair(string Key, string A, string B, int EdgeCount, LineString[] Pieces, LineString[] Lines);
+    private sealed record BorderPair(string Key, string A, string B, int EdgeCount, LineString[] Pieces,
+        LineString[] JunctionChains, Coordinate[] JunctionEndpoints);
     private sealed record InternalEdge(string Territory, long CellA, long CellB, LineString Line, double LengthKm);
     private sealed record Junction(long CellA, long CellB, string Territory, Coordinate Endpoint,
         Coordinate BorderPoint, double DistanceMeters, double AngleDegrees, double EdgeLengthKm, string Classification);
@@ -84,35 +85,48 @@ static class GlobalFrontierLab
                 .ToArray();
             foreach (var piece in pieces) merger.Add(piece);
             var lines = merger.GetMergedLineStrings().Cast<LineString>()
+                .SelectMany(SplitAtAntimeridian)
                 .Where(line => !line.IsEmpty && line.NumPoints >= 2)
                 .OrderBy(line => line.EnvelopeInternal.MinX)
                 .ThenBy(line => line.EnvelopeInternal.MinY)
                 .ThenByDescending(line => line.Length)
                 .ToArray();
-            return new BorderPair(item.Key, item.Value.A, item.Value.B, item.Value.Count, pieces, lines);
+            var endpointMap = new Dictionary<string, Coordinate>(StringComparer.Ordinal);
+            foreach (var piece in pieces)
+            foreach (var endpoint in new[] { piece.Coordinates[0], piece.Coordinates[^1] })
+            {
+                if (Math.Abs(Math.Abs(endpoint.X) - 180.0) < 1e-10) continue;
+                endpointMap.TryAdd($"{endpoint.X:R},{endpoint.Y:R}", new Coordinate(endpoint));
+            }
+            var junctionEndpoints = endpointMap.OrderBy(x => x.Key, StringComparer.Ordinal).Select(x => x.Value).ToArray();
+            return new BorderPair(item.Key, item.Value.A, item.Value.B, item.Value.Count, pieces, lines, junctionEndpoints);
         }).ToArray();
 
         var stopwatch = Stopwatch.StartNew();
         var outputPairs = new List<object>(pairs.Length);
         var summary = new Dictionary<string, object>(StringComparer.Ordinal);
         var methodLines = new Dictionary<string, List<LineString[]>>(StringComparer.Ordinal);
+        var methodJunctionRetention = new Dictionary<string, List<JunctionRetention>>(StringComparer.Ordinal);
 
         foreach (var method in Methods)
         {
             var methodWatch = Stopwatch.StartNew();
             var resultByPair = new List<LineString[]>(pairs.Length);
             long inputVertices = 0, outputVertices = 0;
+            long junctionEndpointCount = 0, junctionEndpointsWithinOneMeter = 0, junctionEndpointsWithinHundredMeters = 0;
+            var maximumJunctionDisplacementMeters = 0.0;
             var lengthsBefore = new List<double>();
             var lengthsAfter = new List<double>();
             var maxDeviation = 0.0;
             var deviationTotal = 0.0;
             long deviationSamples = 0;
             var invalidLines = 0;
+            var retentionByPair = new List<JunctionRetention>(pairs.Length);
             foreach (var pair in pairs)
             {
-                var simplified = pair.Pieces.Select(line => Simplify(line, method.Key)).ToArray();
+                var simplified = pair.JunctionChains.Select(line => Simplify(line, method.Key)).ToArray();
                 resultByPair.Add(simplified);
-                foreach (var line in pair.Pieces)
+                foreach (var line in pair.JunctionChains)
                 {
                     inputVertices += line.NumPoints;
                     lengthsBefore.Add(LengthKm(line.Coordinates));
@@ -124,16 +138,24 @@ static class GlobalFrontierLab
                     if (!line.IsSimple || !line.IsValid) invalidLines++;
                 }
 
-                for (var i = 0; i < pair.Pieces.Length; i++)
+                for (var i = 0; i < pair.JunctionChains.Length; i++)
                 {
-                    var stats = Deviation(pair.Pieces[i], simplified[i]);
+                    var stats = Deviation(pair.JunctionChains[i], simplified[i]);
                     maxDeviation = Math.Max(maxDeviation, stats.MaxMeters);
                     deviationTotal += stats.SumMeters;
                     deviationSamples += stats.Samples;
                 }
+
+                var retention = MeasureJunctionRetention(pair.JunctionEndpoints, simplified);
+                retentionByPair.Add(retention);
+                junctionEndpointCount += retention.EndpointCount;
+                junctionEndpointsWithinOneMeter += retention.WithinOneMeter;
+                junctionEndpointsWithinHundredMeters += retention.WithinHundredMeters;
+                maximumJunctionDisplacementMeters = Math.Max(maximumJunctionDisplacementMeters, retention.MaximumDisplacementMeters);
             }
             methodWatch.Stop();
             methodLines[method.Key] = resultByPair;
+            methodJunctionRetention[method.Key] = retentionByPair;
             summary[method.Key] = new
             {
                 label = method.Label,
@@ -146,6 +168,11 @@ static class GlobalFrontierLab
                 totalLengthAfterKm = lengthsAfter.Sum(),
                 maxDeviationMeters = maxDeviation,
                 meanSourceVertexDeviationMeters = deviationSamples == 0 ? 0 : deviationTotal / deviationSamples,
+                junctionEndpointCount,
+                junctionEndpointsWithinOneMeter,
+                junctionEndpointRetentionWithinOneMeter = junctionEndpointCount == 0 ? 1 : (double)junctionEndpointsWithinOneMeter / junctionEndpointCount,
+                junctionEndpointsWithinHundredMeters,
+                maximumJunctionDisplacementMeters,
                 invalidOrSelfIntersectingLineCount = invalidLines,
                 elapsedMilliseconds = methodWatch.ElapsedMilliseconds
             };
@@ -158,14 +185,19 @@ static class GlobalFrontierLab
             foreach (var method in Methods)
             {
                 var lines = methodLines[method.Key][pairIndex];
+                var retention = methodJunctionRetention[method.Key][pairIndex];
                 variants[method.Key] = new
                 {
                     geometry = ToMultiLineGeoJson(lines),
                     vertexCount = lines.Sum(line => line.NumPoints),
                     lengthKm = lines.Sum(line => LengthKm(line.Coordinates)),
-                    maxDeviationMeters = pair.Pieces.Select((line, index) => Deviation(line, lines[index]).MaxMeters).DefaultIfEmpty(0).Max(),
+                    maxDeviationMeters = pair.JunctionChains.Select((line, index) => Deviation(line, lines[index]).MaxMeters).DefaultIfEmpty(0).Max(),
                     nonSimpleLineComponentCount = lines.Count(line => !line.IsSimple || !line.IsValid),
-                    identicalToOriginal = GeometryCoordinatesEqual(pair.Pieces, lines)
+                    junctionEndpointCount = retention.EndpointCount,
+                    junctionEndpointsWithinOneMeter = retention.WithinOneMeter,
+                    junctionEndpointsWithinHundredMeters = retention.WithinHundredMeters,
+                    maximumJunctionDisplacementMeters = retention.MaximumDisplacementMeters,
+                    identicalToOriginal = GeometryCoordinatesEqual(pair.JunctionChains, lines)
                 };
             }
 
@@ -179,7 +211,7 @@ static class GlobalFrontierLab
                 sharedLineIntersectionCount = groups[pair.Key].SharedLineCount,
                 missingSharedLineIntersectionCount = groups[pair.Key].MissingLineCount,
                 failedSharedLineIntersectionCount = groups[pair.Key].FailedCount,
-                sourceLineComponentCount = pair.Pieces.Length,
+                sourceLineComponentCount = pair.JunctionChains.Length,
                 junctionDetection = new
                 {
                     endpointDistanceToleranceMeters = 500,
@@ -200,9 +232,10 @@ static class GlobalFrontierLab
                 nearbyFusionCandidates = junctions.NearbyPairs,
                 source = new
                 {
-                    geometry = ToMultiLineGeoJson(pair.Lines),
-                    vertexCount = pair.Pieces.Sum(line => line.NumPoints),
-                    lengthKm = pair.Pieces.Sum(line => LengthKm(line.Coordinates))
+                    geometry = ToMultiLineGeoJson(pair.JunctionChains),
+                    vertexCount = pair.JunctionChains.Sum(line => line.NumPoints),
+                    lengthKm = pair.JunctionChains.Sum(line => LengthKm(line.Coordinates)),
+                    junctionEndpointCount = pair.JunctionEndpoints.Length
                 },
                 identicalMethodPairs = IdenticalMethodPairs(pairIndex, methodLines),
                 variants
@@ -250,6 +283,27 @@ static class GlobalFrontierLab
         Console.WriteLine($"Screening result: {outputPath} ({new FileInfo(outputPath).Length:N0} bytes), {stopwatch.Elapsed.TotalSeconds:F1}s.");
     }
 
+    private sealed record JunctionRetention(int EndpointCount, int WithinOneMeter,
+        int WithinHundredMeters, double MaximumDisplacementMeters);
+
+    private static JunctionRetention MeasureJunctionRetention(IReadOnlyList<Coordinate> endpoints,
+        IReadOnlyList<LineString> simplifiedLines)
+    {
+        if (endpoints.Count == 0) return new JunctionRetention(0, 0, 0, 0);
+        var oneMeter = 0;
+        var hundredMeters = 0;
+        var maximum = 0.0;
+        foreach (var endpoint in endpoints)
+        {
+            var nearest = NearestBorderPoint(endpoint, simplifiedLines);
+            var distance = nearest is null ? double.PositiveInfinity : HaversineKm(endpoint, nearest.Value.Point) * 1000.0;
+            if (distance <= 1.0) oneMeter++;
+            if (distance <= 100.0) hundredMeters++;
+            maximum = Math.Max(maximum, distance);
+        }
+        return new JunctionRetention(endpoints.Count, oneMeter, hundredMeters, maximum);
+    }
+
     private static InternalEdge[] BuildInternalEdges(IReadOnlyDictionary<long, Cell> byId, Edge[] edges)
     {
         var output = new List<InternalEdge>();
@@ -279,10 +333,10 @@ static class GlobalFrontierLab
         BorderPair pair,
         IReadOnlyDictionary<string, InternalEdge[]> internalEdgesByTerritory)
     {
-        if (pair.Lines.Length == 0) return (Array.Empty<Junction>(), Array.Empty<object>());
+        if (pair.JunctionChains.Length == 0) return (Array.Empty<Junction>(), Array.Empty<object>());
         var borderEnvelope = new Envelope();
         var maximumLatitude = 0.0;
-        foreach (var line in pair.Lines)
+        foreach (var line in pair.JunctionChains)
         {
             borderEnvelope.ExpandToInclude(line.EnvelopeInternal);
             maximumLatitude = Math.Max(maximumLatitude, line.Coordinates.Select(c => Math.Abs(c.Y)).DefaultIfEmpty(0).Max());
@@ -301,7 +355,7 @@ static class GlobalFrontierLab
                 foreach (var endpointIndex in new[] { 0, coordinates.Length - 1 })
                 {
                     var endpoint = coordinates[endpointIndex];
-                    var nearest = NearestBorderPoint(endpoint, pair.Lines);
+                    var nearest = NearestBorderPoint(endpoint, pair.JunctionChains);
                     if (nearest is null) continue;
                     var distanceMeters = HaversineKm(endpoint, nearest.Value.Point) * 1000.0;
                     if (distanceMeters > 500.0) continue;
