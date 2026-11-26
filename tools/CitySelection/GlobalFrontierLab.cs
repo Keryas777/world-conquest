@@ -436,8 +436,15 @@ static class GlobalFrontierLab
             throw new InvalidOperationException("Global frontier self-test failed: the four method parameters are not distinguishable.");
         if (HaversineKm(new Coordinate(179.9, 0), new Coordinate(-179.9, 0)) > 23.0)
             throw new InvalidOperationException("Global frontier self-test failed: antimeridian length was not normalized.");
+        var seamParts = SplitAtAntimeridian(Factory.CreateLineString(new[]
+        {
+            new Coordinate(179.9, 0), new Coordinate(-179.9, 0)
+        })).ToArray();
+        if (seamParts.Length != 2 || seamParts[0].Coordinates[^1].X != 180.0 ||
+            seamParts[1].Coordinates[0].X != -180.0)
+            throw new InvalidOperationException("Global frontier self-test failed: antimeridian linework was not split consistently.");
 
-        Console.WriteLine("Global frontier self-tests passed: endpoints, determinism, parameter separation and antimeridian distance.");
+        Console.WriteLine("Global frontier self-tests passed: point-only geometry, endpoints, determinism, parameter separation and antimeridian handling.");
     }
 
     private static LineString Simplify(LineString line, string method)
