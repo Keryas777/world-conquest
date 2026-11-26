@@ -162,6 +162,7 @@ static class GlobalFrontierLab
                     vertexCount = lines.Sum(line => line.NumPoints),
                     lengthKm = lines.Sum(line => LengthKm(line.Coordinates)),
                     maxDeviationMeters = pair.Lines.Select((line, index) => Deviation(line, lines[index]).MaxMeters).DefaultIfEmpty(0).Max(),
+                    nonSimpleLineComponentCount = lines.Count(line => !line.IsSimple || !line.IsValid),
                     identicalToOriginal = GeometryCoordinatesEqual(pair.Lines, lines)
                 };
             }
@@ -210,7 +211,6 @@ static class GlobalFrontierLab
         var payload = new
         {
             status = "screening_only",
-            generatedAtUtc = DateTime.UtcNow.ToString("O"),
             source = new
             {
                 graphPath = "docs/voronoi-graph.json",
@@ -230,7 +230,7 @@ static class GlobalFrontierLab
                         .Zip(pairs.Select((_, i) => methodLines[Methods[0].Key][i]))
                         .Count(x => GeometryCoordinatesEqual(x.First, x.Second))),
                 elapsedMilliseconds = stopwatch.ElapsedMilliseconds,
-                workingSetBytes = Process.GetCurrentProcess().WorkingSet64
+                peakWorkingSetBytes = Process.GetCurrentProcess().PeakWorkingSet64
             },
             limitations = new[]
             {
@@ -362,7 +362,7 @@ static class GlobalFrontierLab
         var p = Project(point);
         var best = double.PositiveInfinity;
         Coordinate? closest = null;
-        Point2 tangent = default;
+        Point2? tangent = null;
         foreach (var line in lines)
         {
             var coordinates = line.Coordinates;
@@ -385,7 +385,7 @@ static class GlobalFrontierLab
                 tangent = new Point2(dx, dy);
             }
         }
-        if (closest is null) return null;
+        if (closest is null || tangent is null) return null;
         return (closest, tangent);
     }
 
