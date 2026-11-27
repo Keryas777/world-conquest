@@ -47,6 +47,12 @@ static partial class GlobalFrontierLab
         });
         var leftCell = new Cell(1, "AA", "AA", Rect(0, 0, 2, 2), "left", "AA", 1, 1, 1);
         var rightCell = new Cell(2, "BB", "BB", Rect(2, 0, 4, 2), "right", "BB", 1, 3, 1);
+        var testLine = Factory.CreateLineString(new[] { new Coordinate(0, 0), new Coordinate(1, 1) });
+        var testPoint = Factory.CreatePoint(new Coordinate(0, 0));
+        if (SphericalAreaKm2(testLine) != 0 || SphericalAreaKm2(testPoint) != 0 ||
+            PolygonComponentCount(testLine) != 0 || PolygonHoleCount(testLine) != 0 ||
+            GeometryToGeoJsonObject(testLine) is not null)
+            throw new InvalidOperationException("Reconstruction self-test failed: non-polygon geometries must terminate safely and report no polygon area/components.");
         var source = new Dictionary<string, TerritorySource>(StringComparer.Ordinal)
         {
             ["AA"] = new("AA", "AA", new[] { leftCell }, leftCell.Geometry),
@@ -1199,6 +1205,10 @@ static partial class GlobalFrontierLab
             for (var i = 0; i < polygon.NumInteriorRings; i++) area -= SphericalRingAreaKm2(polygon.GetInteriorRingN(i));
             return Math.Max(0, area);
         }
+        // Points and lines have no area. In NTS, a non-collection geometry
+        // reports NumGeometries == 1 and GetGeometryN(0) returns itself, so
+        // recursing over every Geometry would overflow the stack.
+        if (geometry is not GeometryCollection) return 0;
         var sum = 0.0;
         for (var i = 0; i < geometry.NumGeometries; i++) sum += SphericalAreaKm2(geometry.GetGeometryN(i));
         return sum;
@@ -1234,6 +1244,7 @@ static partial class GlobalFrontierLab
     {
         if (geometry.IsEmpty) return 0;
         if (geometry is Polygon) return 1;
+        if (geometry is not GeometryCollection) return 0;
         var count = 0;
         for (var i = 0; i < geometry.NumGeometries; i++) count += PolygonComponentCount(geometry.GetGeometryN(i));
         return count;
@@ -1243,6 +1254,7 @@ static partial class GlobalFrontierLab
     {
         if (geometry.IsEmpty) return 0;
         if (geometry is Polygon polygon) return polygon.NumInteriorRings;
+        if (geometry is not GeometryCollection) return 0;
         var count = 0;
         for (var i = 0; i < geometry.NumGeometries; i++) count += PolygonHoleCount(geometry.GetGeometryN(i));
         return count;
@@ -1271,6 +1283,7 @@ static partial class GlobalFrontierLab
     {
         if (geometry.IsEmpty) return;
         if (geometry is Polygon polygon) { output.Add(polygon); return; }
+        if (geometry is not GeometryCollection) return;
         for (var i = 0; i < geometry.NumGeometries; i++) CollectPolygons(geometry.GetGeometryN(i), output);
     }
 
