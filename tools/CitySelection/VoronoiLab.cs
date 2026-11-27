@@ -93,7 +93,7 @@ static class VoronoiLab
                     if (i == j) continue;
                     polygon = ClipCloserTo(polygon, sites[i], sites[j]);
                 }
-                var rawCell = ToPolygon(polygon, cosLat);
+                Geometry rawCell = ToPolygon(polygon, cosLat);
                 if (!rawCell.IsValid) rawCell = rawCell.Buffer(0);
                 output[orderedCities[i].Id] = rawCell;
             }

@@ -14,7 +14,8 @@ static partial class GlobalFrontierLab
     private sealed record TerritoryBorder(string Key, string A, string B, string OwnerA, string OwnerB,
         LineString[] SourceLines);
     private sealed record PolygonizationResult(Dictionary<string, Geometry> Territories,
-        int FaceCount, int UnassignedFaceCount, string[] MissingTerritories, string[] InvalidTerritories)
+        int FaceCount, int UnassignedFaceCount, int ExcludedWaterFaceCount,
+        string[] MissingTerritories, string[] InvalidTerritories)
     {
         public int MissingTerritoryCount => MissingTerritories.Length;
         public int InvalidTerritoryCount => InvalidTerritories.Length;
@@ -133,7 +134,7 @@ static partial class GlobalFrontierLab
             }
 
             var globalSourceFallback = false;
-            if (build.MissingTerritoryCount > 0 || build.InvalidTerritoryCount > 0 || changed.Count > 0 ||
+            if (build.MissingTerritoryCount > 0 || build.InvalidTerritoryCount > 0 || changed.Length > 0 ||
                 build.UnassignedFaceCount > 0)
             {
                 // If the local retry cannot close the global graph, preserve every source
@@ -143,13 +144,14 @@ static partial class GlobalFrontierLab
                 restoredBorders.UnionWith(borders.Select(border => border.Key));
                 build = BuildTerritoriesForMethod(method.Key, borders, sourceLines, restoredBorders, coast, territories);
                 changed = ChangedTerritoryAdjacencies(sourceAdjacencies, GetTerritoryAdjacencies(build.Territories));
-                if (build.MissingTerritoryCount > 0 || build.InvalidTerritoryCount > 0 || changed.Count > 0 ||
+                if (build.MissingTerritoryCount > 0 || build.InvalidTerritoryCount > 0 || changed.Length > 0 ||
                     build.UnassignedFaceCount > 0)
                 {
                     globalSourceFallback = true;
                     build = new PolygonizationResult(
                         territories.ToDictionary(item => item.Key, item => item.Value.Geometry, StringComparer.Ordinal),
-                        build.FaceCount, build.UnassignedFaceCount, Array.Empty<string>(), Array.Empty<string>());
+                        build.FaceCount, build.UnassignedFaceCount, build.ExcludedWaterFaceCount,
+                        Array.Empty<string>(), Array.Empty<string>());
                     changed = Array.Empty<string>();
                 }
             }
@@ -293,6 +295,7 @@ static partial class GlobalFrontierLab
                 invalidTerritoryCount = build.InvalidTerritoryCount,
                 missingTerritoryCount = build.MissingTerritoryCount,
                 unassignedPolygonFaceCount = build.UnassignedFaceCount,
+                excludedWaterFaceCount = build.ExcludedWaterFaceCount,
                 polygonizedFaceCount = build.FaceCount,
                 worldGainedKm2 = worldGained,
                 worldLostKm2 = worldLost,
@@ -401,7 +404,7 @@ static partial class GlobalFrontierLab
                     coverageWarnings = 0,
                     auditRun = "Sep 14 territory audit; source graph SHA-256 matches exactly"
                 } : null,
-                missingDirectCellBoundaryEdgeCount = edgeDiagnostics.Count,
+                missingDirectCellBoundaryEdgeCount = edgeDiagnostics.Length,
                 missingDirectCellBoundaryEdges = edgeDiagnostics,
                 jurisdictionModel = "territoryCode defines geometry; ownerCode defines political ownership",
                 seedAuditReference = "Current graph digest was already matched to the Sep 14 territory audit; this run rechecks geometry directly."
@@ -421,7 +424,7 @@ static partial class GlobalFrontierLab
         };
         await File.WriteAllTextAsync(Path.Combine(outDir, "global-frontier-reconstruction-summary.json"),
             JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true }));
-        Console.WriteLine($"Global reconstruction completed: {territories.Count} territories, {cells.Length} city cells, missing direct cell-line edges={edgeDiagnostics.Count}, {timer.Elapsed.TotalMinutes:F1} min.");
+        Console.WriteLine($"Global reconstruction completed: {territories.Count} territories, {cells.Length} city cells, missing direct cell-line edges={edgeDiagnostics.Length}, {timer.Elapsed.TotalMinutes:F1} min.");
     }
 
     private static List<TerritoryBorder> BuildTerritoryBorders(IReadOnlyDictionary<string, TerritorySource> territories)
@@ -489,9 +492,10 @@ static partial class GlobalFrontierLab
         territoryIndex.Build();
         var assigned = source.Keys.ToDictionary(key => key, _ => new List<Geometry>(), StringComparer.Ordinal);
         var unassigned = 0;
+        var excludedWater = 0;
         foreach (var face in faces)
         {
-            var point = face.InteriorPoint();
+            var point = face.InteriorPoint;
             var candidates = territoryIndex.Query(point.EnvelopeInternal)
                 .Where(code => source[code].Geometry.Covers(point))
                 .ToArray();
@@ -511,7 +515,12 @@ static partial class GlobalFrontierLab
                     }
                     catch { }
                 }
-                if (bestCode.Length == 0) { unassigned++; continue; }
+                if (bestCode.Length == 0)
+                {
+                    if (bestOverlap > 1e-14) unassigned++;
+                    else excludedWater++;
+                    continue;
+                }
                 assigned[bestCode].Add(face);
                 continue;
             }
@@ -537,7 +546,7 @@ static partial class GlobalFrontierLab
         var missing = source.Keys.Where(code => !output.ContainsKey(code)).OrderBy(code => code, StringComparer.Ordinal).ToArray();
         var invalid = output.Where(item => !item.Value.IsValid).Select(item => item.Key)
             .OrderBy(code => code, StringComparer.Ordinal).ToArray();
-        return new PolygonizationResult(output, faces.Length, unassigned, missing, invalid);
+        return new PolygonizationResult(output, faces.Length, unassigned, excludedWater, missing, invalid);
     }
 
     private static List<string> GetTerritoryAdjacencies(IReadOnlyDictionary<string, Geometry> territories)
