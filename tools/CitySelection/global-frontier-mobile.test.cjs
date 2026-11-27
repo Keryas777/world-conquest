@@ -62,8 +62,12 @@ async function main() {
     await page.waitForFunction(() => document.querySelector('#status')?.textContent.includes('Carte reconstruite adaptive'));
     assert.match(await page.locator('#details').innerText(), /9.?895 cellules/);
     assert.equal(await page.locator('#reconstruct').getAttribute('aria-pressed'), 'true');
-    await page.locator('#ref40').click();
-    await page.waitForFunction(() => document.querySelector('#status')?.textContent.includes('Carte reconstruite ref40'));
+    for (const method of ['adaptive', 'ref40', 'ref85', 'protected']) {
+      if (method !== 'adaptive') await page.locator(`#${method}`).click();
+      await page.waitForFunction(expected => document.querySelector('#status')?.textContent.includes(`Carte reconstruite ${expected}`), method);
+      assert.match(await page.locator('#status').innerText(), /9.?895 cellules/);
+      assert.match(await page.locator('#details').innerText(), /Monde reconstruit/);
+    }
     await page.locator('#adaptive').click();
     await page.waitForFunction(() => document.querySelector('#status')?.textContent.includes('Carte reconstruite adaptive'));
 

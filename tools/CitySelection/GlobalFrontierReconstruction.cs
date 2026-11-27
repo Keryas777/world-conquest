@@ -23,7 +23,7 @@ static partial class GlobalFrontierLab
         LineString[] SourceLines);
     private sealed record PolygonizationResult(Dictionary<string, Geometry> Territories,
         int FaceCount, int UnassignedFaceCount, int ExcludedWaterFaceCount,
-        string[] MissingTerritories, string[] InvalidTerritories)
+        string[] MissingTerritories, string[] InvalidTerritories, bool RobustLineNodingFallback = false)
     {
         public int MissingTerritoryCount => MissingTerritories.Length;
         public int InvalidTerritoryCount => InvalidTerritories.Length;
@@ -59,6 +59,7 @@ static partial class GlobalFrontierLab
             var second = BuildTerritoriesForMethod(method.Key, borders, lineMap, new HashSet<string>(), coast, source);
             if (first.MissingTerritoryCount != 0 || first.InvalidTerritoryCount != 0 || first.UnassignedFaceCount != 0 ||
                 GetTerritoryAdjacencies(first.Territories).Count != 1 ||
+                first.RobustLineNodingFallback || second.RobustLineNodingFallback ||
                 source.Keys.Any(code => !first.Territories[code].EqualsTopologically(second.Territories[code])))
                 throw new InvalidOperationException($"Reconstruction self-test failed: {method.Key} did not preserve shared topology and deterministic faces.");
         }
@@ -383,6 +384,7 @@ static partial class GlobalFrontierLab
                 locallyRestoredBorderCount = restoredBorders.Count,
                 locallyRestoredBorders = restoredBorders.OrderBy(key => key, StringComparer.Ordinal).ToArray(),
                 globalSourceContourFallback = globalSourceFallback,
+                robustLineNodingFallback = build.RobustLineNodingFallback,
                 cellFallbackCount = cellFallbacks,
                 deterministicOrdering = "territories, border keys, cells and adjacency pairs sorted ordinally / by stable id",
                 territoryMetrics,
@@ -415,7 +417,7 @@ static partial class GlobalFrontierLab
                 geometrySha256 = sha,
                 artifactSha256 = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text))).ToLowerInvariant()
             };
-            Console.WriteLine($"Reconstructed {method.Key}: cells={clips.Count}, territories={build.Territories.Count}, valid={clips.Count(item => item.Valid)}/{clips.Count}, local border restores={restoredBorders.Count}, global fallback={globalSourceFallback}, {methodTimer.Elapsed.TotalSeconds:F1}s, {new FileInfo(output).Length:N0} bytes.");
+            Console.WriteLine($"Reconstructed {method.Key}: cells={clips.Count}, territories={build.Territories.Count}, valid={clips.Count(item => item.Valid)}/{clips.Count}, local border restores={restoredBorders.Count}, robust line noding={build.RobustLineNodingFallback}, global fallback={globalSourceFallback}, {methodTimer.Elapsed.TotalSeconds:F1}s, {new FileInfo(output).Length:N0} bytes.");
         }
 
         var summary = new
@@ -532,14 +534,45 @@ static partial class GlobalFrontierLab
             }
         }
 
+        Console.WriteLine($"Global reconstruction {method}: polygonizing {linework.Count:N0} shared/coast line components with the pre-noded fast path.");
+        PolygonizationResult? direct = null;
+        try
+        {
+            direct = PolygonizeTerritoryLinework(Factory.CreateGeometryCollection(linework.ToArray()), source, false);
+        }
+        catch (Exception error)
+        {
+            Console.WriteLine($"Global reconstruction {method}: pre-noded polygonization raised {error.GetType().Name}; trying robust line noding.");
+        }
+
+        if (direct is not null && direct.MissingTerritoryCount == 0 && direct.InvalidTerritoryCount == 0 &&
+            direct.UnassignedFaceCount == 0 && direct.Territories.Count == source.Count)
+        {
+            var expectedAdjacencies = borders.Select(border => border.Key).ToHashSet(StringComparer.Ordinal);
+            var directAdjacencies = GetTerritoryAdjacencies(direct.Territories);
+            if (ChangedTerritoryAdjacencies(expectedAdjacencies, directAdjacencies).Length == 0)
+            {
+                Console.WriteLine($"Global reconstruction {method}: pre-noded polygonization accepted; all {expectedAdjacencies.Count} territorial adjacencies preserved.");
+                return direct;
+            }
+        }
+
+        Console.WriteLine($"Global reconstruction {method}: pre-noded polygonization did not preserve the complete source topology; applying robust line noding.");
         Geometry noded;
         try { noded = UnaryUnionOp.Union(linework); }
         catch
         {
             noded = UnaryUnionOp.Union(linework.Select(line => line.Buffer(0)));
         }
+        return PolygonizeTerritoryLinework(noded, source, true);
+    }
+
+    private static PolygonizationResult PolygonizeTerritoryLinework(Geometry linework,
+        IReadOnlyDictionary<string, TerritorySource> source,
+        bool robustLineNodingFallback)
+    {
         var polygonizer = new Polygonizer();
-        polygonizer.Add(noded);
+        polygonizer.Add(linework);
         var faces = polygonizer.GetPolygons().Cast<Geometry>()
             .Where(face => !face.IsEmpty && face.Area > 1e-14)
             .ToArray();
@@ -602,7 +635,8 @@ static partial class GlobalFrontierLab
         var missing = source.Keys.Where(code => !output.ContainsKey(code)).OrderBy(code => code, StringComparer.Ordinal).ToArray();
         var invalid = output.Where(item => !item.Value.IsValid).Select(item => item.Key)
             .OrderBy(code => code, StringComparer.Ordinal).ToArray();
-        return new PolygonizationResult(output, faces.Length, unassigned, excludedWater, missing, invalid);
+        return new PolygonizationResult(output, faces.Length, unassigned, excludedWater, missing, invalid,
+            robustLineNodingFallback);
     }
 
     private static List<string> GetTerritoryAdjacencies(IReadOnlyDictionary<string, Geometry> territories)
