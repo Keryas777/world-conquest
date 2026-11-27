@@ -5,11 +5,16 @@ using System.Text.Json.Nodes;
 using NetTopologySuite.Geometries;
 using NetTopologySuite.Index.Strtree;
 using NetTopologySuite.Operation.Distance;
+using NetTopologySuite.Operation.Overlay;
+using NetTopologySuite.Operation.OverlayNG;
 using NetTopologySuite.Operation.Polygonize;
 using NetTopologySuite.Operation.Union;
 
 static partial class GlobalFrontierLab
 {
+    private static long _robustIntersectionFallbackCount;
+    private static long _robustDifferenceFallbackCount;
+
     private sealed record TerritorySource(string Code, string Owner, Cell[] Cells, Geometry Geometry);
     private sealed record TerritoryBorder(string Key, string A, string B, string OwnerA, string OwnerB,
         LineString[] SourceLines);
@@ -62,6 +67,23 @@ static partial class GlobalFrontierLab
         };
         if (BuildTerritoryBorders(corner).Count != 0)
             throw new InvalidOperationException("Reconstruction self-test failed: point-only contact was counted as a shared border.");
+
+        var nearCoincidentA = Factory.CreatePolygon(new[]
+        {
+            new Coordinate(13.13644, 48.29106),
+            new Coordinate(13.24100567376384, 48.30323949609299),
+            new Coordinate(13.5, 48.30), new Coordinate(13.5, 48.60),
+            new Coordinate(13.13644, 48.60), new Coordinate(13.13644, 48.29106)
+        });
+        var nearCoincidentB = Factory.CreatePolygon(new[]
+        {
+            new Coordinate(13.24100567376384, 48.30323949609299),
+            new Coordinate(13.24101, 48.30324), new Coordinate(13.30, 48.40),
+            new Coordinate(13.20, 48.40), new Coordinate(13.24100567376384, 48.30323949609299)
+        });
+        var robustDifference = SafeDifference(nearCoincidentA, nearCoincidentB);
+        if (robustDifference.IsEmpty || !robustDifference.IsValid)
+            throw new InvalidOperationException("Reconstruction self-test failed: a near-coincident micro-segment difference was not resolved as a valid polygon.");
     }
 
     private static async Task GenerateReconstructionAsync(string outDir, Cell[] cells, Edge[] edges)
@@ -113,6 +135,8 @@ static partial class GlobalFrontierLab
         foreach (var method in Methods)
         {
             var methodTimer = Stopwatch.StartNew();
+            var robustIntersectionStart = System.Threading.Interlocked.Read(ref _robustIntersectionFallbackCount);
+            var robustDifferenceStart = System.Threading.Interlocked.Read(ref _robustDifferenceFallbackCount);
             var sourceLines = borders.ToDictionary(border => border.Key, border => border.SourceLines,
                 StringComparer.Ordinal);
             var restoredBorders = new HashSet<string>(StringComparer.Ordinal);
@@ -334,6 +358,8 @@ static partial class GlobalFrontierLab
                 deterministicOrdering = "territories, border keys, cells and adjacency pairs sorted ordinally / by stable id",
                 territoryMetrics,
                 elapsedMilliseconds = methodTimer.ElapsedMilliseconds,
+                robustIntersectionFallbackCount = System.Threading.Interlocked.Read(ref _robustIntersectionFallbackCount) - robustIntersectionStart,
+                robustDifferenceFallbackCount = System.Threading.Interlocked.Read(ref _robustDifferenceFallbackCount) - robustDifferenceStart,
                 peakWorkingSetBytes = Process.GetCurrentProcess().PeakWorkingSet64
             };
 
@@ -678,13 +704,21 @@ static partial class GlobalFrontierLab
     private static Geometry SafeIntersection(Geometry a, Geometry b)
     {
         try { return a.Intersection(b); }
-        catch { return a.Buffer(0).Intersection(b.Buffer(0)); }
+        catch
+        {
+            System.Threading.Interlocked.Increment(ref _robustIntersectionFallbackCount);
+            return OverlayNGRobust.Overlay(a, b, SpatialFunction.Intersection);
+        }
     }
 
     private static Geometry SafeDifference(Geometry a, Geometry b)
     {
         try { return a.Difference(b); }
-        catch { return a.Buffer(0).Difference(b.Buffer(0)); }
+        catch
+        {
+            System.Threading.Interlocked.Increment(ref _robustDifferenceFallbackCount);
+            return OverlayNGRobust.Overlay(a, b, SpatialFunction.Difference);
+        }
     }
 
     private static double FaceOverlapArea(Geometry face, Geometry territory)
