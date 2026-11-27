@@ -55,6 +55,52 @@ static class VoronoiLab
             ["XK"] = new[] { "Kosovo" }
         };
 
+    // Reuse the production experiment's C# half-plane Voronoi construction for
+    // frontier reconstruction. The returned polygons are uncut by territory
+    // borders; callers clip each one against the newly reconstructed mask.
+    public static Dictionary<long, Geometry> BuildRawWorldCells(
+        IReadOnlyDictionary<string, List<City>> selected,
+        IReadOnlyDictionary<string, Geometry> territoryMasks)
+    {
+        var cities = selected.OrderBy(item => item.Key, StringComparer.Ordinal)
+            .SelectMany(item => item.Value.OrderBy(city => city.Id)).ToArray();
+        if (cities.Length == 0) return new Dictionary<long, Geometry>();
+        var referenceLat = cities.Average(city => city.Lat) * Math.PI / 180.0;
+        var cosLat = Math.Cos(referenceLat);
+        var output = new Dictionary<long, Geometry>(cities.Length);
+
+        foreach (var (territoryCode, territoryCities) in selected.OrderBy(item => item.Key, StringComparer.Ordinal))
+        {
+            if (!territoryMasks.TryGetValue(territoryCode, out var territory))
+                throw new InvalidOperationException($"Missing reconstructed territory mask for {territoryCode}.");
+            var orderedCities = territoryCities.OrderBy(city => city.Id).ToArray();
+            var sites = orderedCities.Select(city => new Pt(city.Lon * cosLat, city.Lat)).ToArray();
+            var envelope = territory.EnvelopeInternal;
+            var minX = envelope.MinX * cosLat - .5;
+            var maxX = envelope.MaxX * cosLat + .5;
+            var minY = envelope.MinY - .5;
+            var maxY = envelope.MaxY + .5;
+
+            for (var i = 0; i < orderedCities.Length; i++)
+            {
+                var polygon = new List<Pt>
+                {
+                    new(minX, minY), new(maxX, minY),
+                    new(maxX, maxY), new(minX, maxY)
+                };
+                for (var j = 0; j < sites.Length && polygon.Count > 0; j++)
+                {
+                    if (i == j) continue;
+                    polygon = ClipCloserTo(polygon, sites[i], sites[j]);
+                }
+                var rawCell = ToPolygon(polygon, cosLat);
+                if (!rawCell.IsValid) rawCell = rawCell.Buffer(0);
+                output[orderedCities[i].Id] = rawCell;
+            }
+        }
+        return output;
+    }
+
     public static async Task GenerateWorldAsync(
         HttpClient http,
         string outDir,
@@ -1168,3 +1214,4 @@ static class VoronoiLab
         return cities;
     }
 }
+

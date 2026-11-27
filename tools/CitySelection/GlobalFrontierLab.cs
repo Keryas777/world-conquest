@@ -5,9 +5,10 @@ using NetTopologySuite.Operation.Distance;
 using NetTopologySuite.Operation.Linemerge;
 using NetTopologySuite.Operation.Union;
 
-static class GlobalFrontierLab
+static partial class GlobalFrontierLab
 {
-    private sealed record Cell(long Id, string Territory, string Owner, Geometry Geometry);
+    private sealed record Cell(long Id, string Territory, string Owner, Geometry Geometry,
+        string Name, string Country, double Latitude, double Longitude, long Population);
     private sealed record Edge(long A, long B, bool Foreign);
     private sealed record BorderPair(string Key, string A, string B, int EdgeCount, LineString[] Pieces,
         LineString[] MergedBorderLines, Coordinate[] SourcePieceEndpoints, bool LineMergeFallback);
@@ -285,6 +286,8 @@ static class GlobalFrontierLab
         await File.WriteAllTextAsync(outputPath, JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = false }));
         Console.WriteLine($"Global frontier screening: cells={cells.Length}, territories={payload.source.territoryCount}, foreign edges={payload.source.foreignEdgeCount}, border pairs={pairs.Length}.");
         Console.WriteLine($"Screening result: {outputPath} ({new FileInfo(outputPath).Length:N0} bytes), {stopwatch.Elapsed.TotalSeconds:F1}s.");
+
+        await GenerateReconstructionAsync(outDir, cells, edges);
     }
 
     private sealed record SourceEndpointDisplacement(int EndpointCount, int WithinOneMeter,
@@ -509,6 +512,8 @@ static class GlobalFrontierLab
         var seamNearest = NearestBorderPoint(new Coordinate(-179.9, 0), new[] { seamBorder });
         if (seamNearest is null || HaversineKm(new Coordinate(-179.9, 0), seamNearest.Value.Point) > 12.0)
             throw new InvalidOperationException("Global frontier self-test failed: antimeridian junction lookup used the long way around.");
+
+        RunReconstructionSelfTests();
 
         Console.WriteLine("Global frontier self-tests passed: point-only geometry, endpoints, determinism, parameter separation and antimeridian handling.");
     }
@@ -749,7 +754,12 @@ static class GlobalFrontierLab
             element.GetProperty("id").GetInt64(),
             element.GetProperty("territoryCode").GetString() ?? "",
             element.GetProperty("ownerCode").GetString() ?? "",
-            geometry);
+            geometry,
+            element.TryGetProperty("name", out var name) ? name.GetString() ?? "" : "",
+            element.TryGetProperty("country", out var country) ? country.GetString() ?? "" : "",
+            element.TryGetProperty("lat", out var lat) ? lat.GetDouble() : 0,
+            element.TryGetProperty("lon", out var lon) ? lon.GetDouble() : 0,
+            element.TryGetProperty("population", out var population) ? population.GetInt64() : 0);
     }
 
     private static Geometry? ParseGeoJsonGeometry(JsonElement geometry)
@@ -775,3 +785,4 @@ static class GlobalFrontierLab
     private static LinearRing ParseRing(JsonElement ring) => Factory.CreateLinearRing(
         ring.EnumerateArray().Select(point => new Coordinate(point[0].GetDouble(), point[1].GetDouble())).ToArray());
 }
+
