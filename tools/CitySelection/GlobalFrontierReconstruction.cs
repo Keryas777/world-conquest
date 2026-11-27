@@ -328,11 +328,11 @@ static partial class GlobalFrontierLab
             {
                 var targetTerritory = build.Territories[sourceCell.Territory];
                 var rawCell = rawVoronoiCells[sourceCell.Id];
-                // If the simplified shared network fails its world topology guardrail,
-                // retain the existing cell geometry as an explicit, measurable rollback.
-                var geometry = globalSourceFallback
-                    ? (Geometry)sourceCell.Geometry.Copy()
-                    : SafeIntersection(rawCell, targetTerritory);
+                // The territory contour may fall back to its canonical source mask when
+                // polygonization cannot preserve the world graph. Even in that case, rebuild
+                // each city cell from the current Voronoi sites and clip it to that mask; never
+                // silently copy the published cell layer as the reconstruction output.
+                var geometry = SafeIntersection(rawCell, targetTerritory);
                 var fallback = false;
                 var geometryRepaired = false;
                 if (geometry.IsEmpty)
@@ -394,6 +394,9 @@ static partial class GlobalFrontierLab
             var landOverlapArea = SphericalAreaKm2(SafeIntersection(rebuiltWorld, land));
             var worldGained = Math.Max(0, SphericalAreaKm2(rebuiltWorld) - landOverlapArea);
             var worldLost = Math.Max(0, SphericalAreaKm2(land) - landOverlapArea);
+            var rebuiltCellAreaSum = clips.Sum(item => item.RebuiltAreaKm2);
+            var rebuiltCellOverlapArea = Math.Max(0, rebuiltCellAreaSum - SphericalAreaKm2(rebuiltWorld));
+            var sourceCellOverlapArea = Math.Max(0, sourceCellAreaSum - sourceCellUnionArea);
             var sourceCellAdjacencies = edges.Select(edge => CellPairKey(edge.A, edge.B)).ToHashSet(StringComparer.Ordinal);
             var rebuiltAdjacencies = BuildCellAdjacencies(clips);
             var lostCellAdjacencies = sourceCellAdjacencies.Except(rebuiltAdjacencies).OrderBy(key => key, StringComparer.Ordinal).ToArray();
@@ -495,6 +498,12 @@ static partial class GlobalFrontierLab
                 worldLostKm2 = worldLost,
                 cellGainedKm2 = clips.Sum(item => item.GainedAreaKm2),
                 cellLostKm2 = clips.Sum(item => item.LostAreaKm2),
+                sourceCellAreaSumKm2 = sourceCellAreaSum,
+                sourceCellUnionAreaKm2 = sourceCellUnionArea,
+                sourceCellOverlapAreaKm2 = sourceCellOverlapArea,
+                rebuiltCellAreaSumKm2 = rebuiltCellAreaSum,
+                rebuiltCellOverlapAreaKm2 = rebuiltCellOverlapArea,
+                cellOverlapAreaChangeKm2 = rebuiltCellOverlapArea - sourceCellOverlapArea,
                 relativeCellAreaChangeMaximum = clips.Select(item => item.SourceAreaKm2 == 0 ? 0 : Math.Abs(item.RebuiltAreaKm2 - item.SourceAreaKm2) / item.SourceAreaKm2).DefaultIfEmpty(0).Max(),
                 sourceSeedCoveredCount,
                 rebuiltSeedCoveredCount,
@@ -529,13 +538,19 @@ static partial class GlobalFrontierLab
                 sourceContourBorderCount = restoredBorders.Count,
                 globalSourceContourFallback = globalSourceFallback,
                 globalSourceContourFallbackReason = globalSourceFallback
-                    ? "Direct and locally restored polygonization did not close the territory graph; the complete source territorial masks and source cell geometries were restored."
+                    ? "Direct and locally restored polygonization did not close the territory graph; canonical source territory masks were restored. City cells are still regenerated from the current Voronoi sites unless an explicit per-cell fallback is counted."
                     : null,
                 indexedLineNodingApplied = true,
                 fullUnionNodingFallback = build.FullUnionNodingFallback,
                 cellFallbackCount = cellFallbacks,
                 cellGeometryRepairCount = cellGeometryRepairs,
-                sourceMaskCellFallbackCount = globalSourceFallback ? clips.Count : 0,
+                sourceMaskCellFallbackCount = cellFallbacks,
+                sourceCellGeometryFallbackCount = cellFallbacks,
+                cellsRegeneratedFromVoronoiCount = clips.Count - cellFallbacks,
+                cellsIdenticalToSourceGeometryCount = clips.Count(item => item.Geometry.EqualsExact(item.Cell.Geometry)),
+                cellsChangedFromSourceGeometryCount = clips.Count(item => !item.Geometry.EqualsExact(item.Cell.Geometry)),
+                contourSimplificationAccepted = !globalSourceFallback,
+                cellReconstructionMethod = "Delaunay-backed planar Voronoi per geographic territory, clipped to the accepted territory mask",
                 topologyValidated = !globalSourceFallback &&
                     clips.Count == cells.Length && emptyCells == 0 && invalidCells == 0 &&
                     build.Territories.Count == territories.Count && build.MissingTerritoryCount == 0 &&
@@ -546,7 +561,7 @@ static partial class GlobalFrontierLab
                     coastDeviationKm <= 0.01 &&
                     clips.All(item => !item.SourceSeedCovered || item.RebuiltSeedCovered),
                 topologyValidationFailureReasons = BuildTopologyValidationFailureReasons(
-                    globalSourceFallback, clips.Count, cells.Length, emptyCells, invalidCells,
+                    globalSourceFallback, cellFallbacks, clips.Count, cells.Length, emptyCells, invalidCells,
                     territories.Count, build, lostCellAdjacencies.Length, createdCellAdjacencies.Length,
                     territoryAdjacencyChanges, rebuiltTerritoryOverlaps.Length,
                     cellCoverageGaps.Values.Sum(), cellOverlaps.Values.Sum(), coastDeviationKm,
@@ -585,6 +600,7 @@ static partial class GlobalFrontierLab
             Console.WriteLine($"Reconstructed {method.Key}: cells={clips.Count}, territories={build.Territories.Count}, valid={clips.Count(item => item.Valid)}/{clips.Count}, locally restored borders={locallyRestoredBorders.Count}, source-contour borders={restoredBorders.Count}, indexed line noding=true, full-union noding fallback={build.FullUnionNodingFallback}, global fallback={globalSourceFallback}, {methodTimer.Elapsed.TotalSeconds:F1}s, {new FileInfo(output).Length:N0} bytes.");
         }
 
+        var fusionDiagnostics = ReadFusionDiagnostics(outDir);
         var summary = new
         {
             schema = "world-conquest.global-frontier-reconstruction.v1",
@@ -648,11 +664,14 @@ static partial class GlobalFrontierLab
             },
             junctions = new
             {
-                detectedNearbyCandidateCount = ReadFusionCandidateCount(outDir),
+                detectedNearbyCandidateCount = fusionDiagnostics.NearbyPairCount,
+                potentialRedundantPairCount = fusionDiagnostics.PotentialRedundantPairCount,
+                potentialRedundantClusterCount = fusionDiagnostics.PotentialRedundantClusterCount,
+                preservedDistinctPairCount = fusionDiagnostics.PreservedDistinctPairCount,
                 belgiumLuxembourgReference = ReadBelgiumLuxembourgReference(outDir),
                 fusionAppliedCount = 0,
-                fusionRule = "Merge only after moving both junctions to one point on their original shared contour and rebuilding the incident cells without losing any source cell adjacency, creating invalid/empty cells, or changing territory adjacency. Proximity alone is insufficient.",
-                fusionRuleStatus = "The rule is expressed as a topological acceptance test, but no junction is automatically moved in this run. The 23 candidates remain diagnostic until the movement operation passes that test."
+                fusionRule = "A pair is only a potential redundancy when the endpoints are on opposite territory sides, both incident internal edges are transverse and at least 0.5 km long, and the same two territory/cell-edge incidence signature recurs. Project one shared anchor onto the original contour, rebuild every incident cell, then accept only if no source cell or territory adjacency is lost/created and no new empty/invalid/overlapping cell appears.",
+                fusionRuleStatus = "The worldwide classifier marks repeated opposite-side transverse incidence clusters for a topology rebuild test and preserves distinct incidence signatures. It does not apply a fusion unless that local rebuild passes the source-adjacency and validity checks."
             },
             methods = methodSummaries,
             files = reconstructionMethods,
@@ -931,7 +950,7 @@ static partial class GlobalFrontierLab
     }
 
     private static string[] BuildTopologyValidationFailureReasons(bool globalSourceFallback,
-        int rebuiltCellCount, int sourceCellCount, int emptyCellCount, int invalidCellCount,
+        int sourceCellGeometryFallbackCount, int rebuiltCellCount, int sourceCellCount, int emptyCellCount, int invalidCellCount,
         int sourceTerritoryCount, PolygonizationResult build,
         int lostCellAdjacencyCount, int createdCellAdjacencyCount,
         IReadOnlyCollection<string> territoryAdjacencyChanges, int territoryOverlapPairCount,
@@ -939,7 +958,8 @@ static partial class GlobalFrontierLab
         int lostCoveredSeedCount)
     {
         var reasons = new List<string>();
-        if (globalSourceFallback) reasons.Add("global source-mask/cell fallback was used");
+        if (globalSourceFallback) reasons.Add("canonical source territory contours were restored; the selected border simplification was not applied world-wide");
+        if (sourceCellGeometryFallbackCount > 0) reasons.Add($"{sourceCellGeometryFallbackCount} cell geometry(ies) fell back to the published source geometry");
         if (rebuiltCellCount != sourceCellCount) reasons.Add($"cell count changed from {sourceCellCount} to {rebuiltCellCount}");
         if (emptyCellCount > 0) reasons.Add($"{emptyCellCount} empty cell(s)");
         if (invalidCellCount > 0) reasons.Add($"{invalidCellCount} invalid cell(s)");
@@ -1308,15 +1328,24 @@ static partial class GlobalFrontierLab
         return value[(value.IndexOf('-') + 1)..];
     }
 
-    private static int ReadFusionCandidateCount(string outDir)
+    private static FusionDiagnostics ReadFusionDiagnostics(string outDir)
     {
         try
         {
             using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(outDir, "global-frontier-results.json")));
-            return document.RootElement.GetProperty("pairs").EnumerateArray()
-                .Sum(pair => pair.GetProperty("nearbyFusionCandidates").GetArrayLength());
+            var candidates = document.RootElement.GetProperty("pairs").EnumerateArray()
+                .SelectMany(pair => pair.GetProperty("nearbyFusionCandidates").EnumerateArray())
+                .ToArray();
+            var potential = candidates.Where(candidate => candidate.TryGetProperty("fusionCandidate", out var value) &&
+                value.ValueKind == JsonValueKind.True).ToArray();
+            var clusters = potential.Select(candidate => candidate.TryGetProperty("incidenceSignature", out var signature)
+                    ? signature.GetString() : null)
+                .Where(signature => !string.IsNullOrEmpty(signature))
+                .Distinct(StringComparer.Ordinal).Count();
+            return new FusionDiagnostics(candidates.Length, potential.Length, clusters,
+                candidates.Length - potential.Length);
         }
-        catch { return 0; }
+        catch { return new FusionDiagnostics(0, 0, 0, 0); }
     }
 
     private static object ReadBelgiumLuxembourgReference(string outDir)
@@ -1328,24 +1357,34 @@ static partial class GlobalFrontierLab
                 .FirstOrDefault(item => item.GetProperty("key").GetString() == "BE-LU");
             if (pair.ValueKind == JsonValueKind.Undefined)
                 return new { detected = false, referenceAnchor = new[] { 5.88546, 49.64353 }, matchingCandidate = (object?)null };
-            var candidate = pair.GetProperty("nearbyFusionCandidates").EnumerateArray().FirstOrDefault(item =>
+            var matches = pair.GetProperty("nearbyFusionCandidates").EnumerateArray().Where(item =>
             {
                 var a = item.GetProperty("cellsA").EnumerateArray().Select(value => value.GetInt64()).OrderBy(value => value).ToArray();
                 var b = item.GetProperty("cellsB").EnumerateArray().Select(value => value.GetInt64()).OrderBy(value => value).ToArray();
                 return a.SequenceEqual(new long[] { 2787315, 2792442 }) &&
                        b.SequenceEqual(new long[] { 2960316, 2960634 });
-            });
+            }).ToArray();
+            var candidate = matches.OrderBy(item => Math.Abs(item.GetProperty("distanceMeters").GetDouble() - 4380.0))
+                .FirstOrDefault();
             return new
             {
-                detected = pair.GetProperty("nearbyFusionCandidates").GetArrayLength() > 0,
+                detected = matches.Length > 0,
                 referenceAnchor = new[] { 5.88546, 49.64353 },
                 validatedVisualJunctionDistanceMeters = 4380.0,
+                matchingCandidateCount = matches.Length,
                 matchingCandidate = candidate.ValueKind == JsonValueKind.Undefined ? null : (object)new
                 {
                     distanceMeters = candidate.GetProperty("distanceMeters").GetDouble(),
                     cellsA = candidate.GetProperty("cellsA").EnumerateArray().Select(value => value.GetInt64()).ToArray(),
                     cellsB = candidate.GetProperty("cellsB").EnumerateArray().Select(value => value.GetInt64()).ToArray(),
-                    borderPoints = new[] { candidate.GetProperty("a").Clone(), candidate.GetProperty("b").Clone() }
+                    borderPoints = new[] { candidate.GetProperty("a").Clone(), candidate.GetProperty("b").Clone() },
+                    proposedCommonBorderPoint = candidate.TryGetProperty("proposedCommonBorderPoint", out var point) &&
+                        point.ValueKind == JsonValueKind.Array
+                            ? point.EnumerateArray().Select(value => value.GetDouble()).ToArray() : null,
+                    classification = candidate.TryGetProperty("classification", out var classification)
+                        ? classification.GetString() : null,
+                    fusionCandidate = candidate.TryGetProperty("fusionCandidate", out var fusionCandidate) &&
+                        fusionCandidate.ValueKind == JsonValueKind.True
                 }
             };
         }

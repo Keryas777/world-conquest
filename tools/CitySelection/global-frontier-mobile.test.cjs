@@ -24,23 +24,53 @@ async function main() {
   ]) assert.ok(fs.existsSync(path.join(root, file)), `Missing preview file ${file}`);
 
   const graph = JSON.parse(fs.readFileSync(path.join(root, 'voronoi-graph.json'), 'utf8'));
+  const screening = JSON.parse(fs.readFileSync(path.join(root, 'global-frontier-results.json'), 'utf8'));
   const reconstruction = JSON.parse(fs.readFileSync(path.join(root, 'global-frontier-reconstruction-summary.json'), 'utf8'));
   assert.equal(graph.cells.length, reconstruction.source.cellCount, 'Source graph and reconstruction summary must agree on cell count');
+  assert.equal(reconstruction.junctions.belgiumLuxembourgReference.detected, true,
+    'Worldwide junction detection must retain the validated Belgium–Luxembourg case');
+  assert.equal(reconstruction.junctions.belgiumLuxembourgReference.matchingCandidate.fusionCandidate, true,
+    'Repeated opposite-side transverse incidence must classify the validated Belgium–Luxembourg case as a candidate');
+  assert.ok(Array.isArray(reconstruction.junctions.belgiumLuxembourgReference.matchingCandidate.proposedCommonBorderPoint),
+    'A candidate must include a common point projected onto the original border');
+  assert.equal(reconstruction.junctions.fusionAppliedCount, 0,
+    'Potential fusion candidates must not be applied without a passing incident-cell rebuild');
+  assert.ok(reconstruction.junctions.potentialRedundantPairCount < reconstruction.junctions.detectedNearbyCandidateCount,
+    'The incidence classifier must preserve some close but topologically distinct pairs');
+  assert.equal(reconstruction.junctions.potentialRedundantPairCount + reconstruction.junctions.preservedDistinctPairCount,
+    reconstruction.junctions.detectedNearbyCandidateCount,
+    'Every nearby junction pair must be classified exactly once');
+  assert.ok(screening.pairs.some(pair => pair.key === 'BE-LU' && pair.nearbyFusionCandidates.some(candidate =>
+    candidate.fusionCandidate && candidate.classification === 'repeated-opposite-transverse-incidence')),
+  'The global candidate viewer must expose the classified Belgium–Luxembourg pair');
+  const sourceById = new Map(graph.cells.map(cell => [cell.id, cell]));
   for (const method of ['adaptive', 'ref40', 'ref85', 'protected']) {
     const collection = JSON.parse(fs.readFileSync(path.join(root, `global-frontier-reconstruction-${method}.geojson`), 'utf8'));
     assert.equal(collection.metadata.method, method, `${method} output must identify its method`);
     assert.equal(typeof collection.metadata.topologyValidated, 'boolean', `${method} must publish its topology status`);
+    assert.equal(collection.metadata.cellsRegeneratedFromVoronoiCount + collection.metadata.sourceCellGeometryFallbackCount,
+      graph.cells.length, `${method} must account for every regenerated or explicitly restored cell`);
     assert.equal(collection.features.length, graph.cells.length, `${method} must preserve every source city cell`);
     assert.equal(new Set(collection.features.map(feature => feature.properties.id)).size, graph.cells.length,
       `${method} must preserve unique city identifiers`);
     assert.ok(collection.features.every(feature =>
       ['Polygon', 'MultiPolygon'].includes(feature.geometry?.type) && feature.geometry.coordinates?.length > 0),
     `${method} output must contain non-empty polygonal cells`);
+    const changedGeometryCount = collection.features.filter(feature =>
+      JSON.stringify(feature.geometry) !== JSON.stringify(sourceById.get(feature.properties.id)?.geometry)).length;
+    assert.equal(collection.metadata.cellsChangedFromSourceGeometryCount, changedGeometryCount,
+      `${method} must report geometry changes against the published source cells accurately`);
+    assert.equal(collection.metadata.cellsIdenticalToSourceGeometryCount + changedGeometryCount,
+      graph.cells.length, `${method} source-versus-rebuild comparison must cover every cell`);
     if (collection.metadata.globalSourceContourFallback) {
-      assert.equal(collection.metadata.sourceMaskCellFallbackCount, graph.cells.length,
-        `${method} source fallback count must be explicit`);
+      assert.equal(collection.metadata.contourSimplificationAccepted, false,
+        `${method} must disclose that source contours replaced the simplified network`);
+      assert.equal(collection.metadata.sourceMaskCellFallbackCount, collection.metadata.sourceCellGeometryFallbackCount,
+        `${method} must distinguish per-cell source geometry fallback from source contour reuse`);
+      assert.ok(collection.metadata.cellsRegeneratedFromVoronoiCount > 0,
+        `${method} must still rebuild city cells when territorial contours fall back`);
       assert.notEqual(collection.metadata.topologyValidated, true,
-        `${method} source fallback must not be reported as a validated reconstruction`);
+        `${method} contour fallback must not be reported as a fully validated reconstruction`);
     }
     if (!collection.metadata.topologyValidated)
       assert.ok(collection.metadata.topologyValidationFailureReasons.length > 0,

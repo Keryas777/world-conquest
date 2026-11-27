@@ -15,6 +15,10 @@ static partial class GlobalFrontierLab
     private sealed record InternalEdge(string Territory, long CellA, long CellB, LineString Line, double LengthKm);
     private sealed record Junction(long CellA, long CellB, string Territory, Coordinate Endpoint,
         Coordinate BorderPoint, double DistanceMeters, double AngleDegrees, double EdgeLengthKm, string Classification);
+    private sealed record NearbyJunctionPair(Junction Left, Junction Right, double DistanceMeters,
+        string IncidenceSignature);
+    private sealed record FusionDiagnostics(int NearbyPairCount, int PotentialRedundantPairCount,
+        int PotentialRedundantClusterCount, int PreservedDistinctPairCount);
     private sealed record Point2(double X, double Y);
 
     private static readonly GeometryFactory Factory =
@@ -379,7 +383,7 @@ static partial class GlobalFrontierLab
             }
         }
 
-        var nearby = new List<object>();
+        var nearby = new List<NearbyJunctionPair>();
         for (var i = 0; i < candidates.Count; i++)
         for (var j = i + 1; j < candidates.Count; j++)
         {
@@ -388,23 +392,81 @@ static partial class GlobalFrontierLab
             if (left.CellA == right.CellA && left.CellB == right.CellB) continue;
             var distanceMeters = HaversineKm(left.BorderPoint, right.BorderPoint) * 1000.0;
             if (distanceMeters > 5000.0) continue;
-            var sharesCell = left.CellA == right.CellA || left.CellA == right.CellB || left.CellB == right.CellA || left.CellB == right.CellB;
-            nearby.Add(new
+            nearby.Add(new NearbyJunctionPair(left, right, distanceMeters, IncidenceSignature(left, right)));
+        }
+
+        var signatureCounts = nearby.GroupBy(item => item.IncidenceSignature, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
+        var candidateGroups = nearby.Where(item => IsPotentialFusionCandidate(
+                item.Left.Territory != item.Right.Territory,
+                item.Left.Classification == "transverse" && item.Right.Classification == "transverse",
+                signatureCounts[item.IncidenceSignature] > 1))
+            .GroupBy(item => item.IncidenceSignature, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
+
+        var serialized = nearby.Select(item =>
+        {
+            var left = item.Left;
+            var right = item.Right;
+            var oppositeSides = left.Territory != right.Territory;
+            var repeatedSignature = signatureCounts[item.IncidenceSignature] > 1;
+            var transverse = left.Classification == "transverse" && right.Classification == "transverse";
+            var fusionCandidate = IsPotentialFusionCandidate(oppositeSides, transverse, repeatedSignature);
+            var candidateAnchor = fusionCandidate
+                ? CandidateGroupAnchor(candidateGroups[item.IncidenceSignature], pair.MergedBorderLines)
+                : (Coordinate?)null;
+            var sharesCell = left.CellA == right.CellA || left.CellA == right.CellB ||
+                             left.CellB == right.CellA || left.CellB == right.CellB;
+            return (object)new
             {
                 a = new[] { left.BorderPoint.X, left.BorderPoint.Y },
                 b = new[] { right.BorderPoint.X, right.BorderPoint.Y },
-                distanceMeters,
+                distanceMeters = item.DistanceMeters,
                 cellsA = new[] { left.CellA, left.CellB },
                 cellsB = new[] { right.CellA, right.CellB },
                 territoryA = left.Territory,
                 territoryB = right.Territory,
-                oppositeTerritorySides = left.Territory != right.Territory,
+                oppositeTerritorySides = oppositeSides,
                 incidentCellOverlap = sharesCell,
-                fusionCandidate = left.Territory != right.Territory,
+                incidenceSignature = item.IncidenceSignature,
+                incidenceSignaturePairCount = signatureCounts[item.IncidenceSignature],
+                fusionCandidate,
+                classification = fusionCandidate ? "repeated-opposite-transverse-incidence" :
+                    !oppositeSides ? "preserve-same-territory-side" :
+                    !transverse ? "preserve-short-or-boundary-parallel-edge" :
+                    "preserve-distinct-incidence",
+                proposedCommonBorderPoint = candidateAnchor is null ? null :
+                    new[] { candidateAnchor.Value.X, candidateAnchor.Value.Y },
+                requiresIncidentCellRebuildAndAdjacencyProof = fusionCandidate,
                 fusionApplied = false
-            });
-        }
-        return (candidates.ToArray(), nearby.ToArray());
+            };
+        }).ToArray();
+        return (candidates.ToArray(), serialized);
+    }
+
+    private static string IncidenceSignature(Junction left, Junction right)
+    {
+        static string Side(Junction junction) =>
+            $"{junction.Territory}:{CellPairKey(junction.CellA, junction.CellB)}";
+        return string.Join("|", new[] { Side(left), Side(right) }.OrderBy(value => value, StringComparer.Ordinal));
+    }
+
+    private static bool IsPotentialFusionCandidate(bool oppositeTerritorySides, bool bothTransverse,
+        bool repeatedIncidenceSignature) => oppositeTerritorySides && bothTransverse && repeatedIncidenceSignature;
+
+    private static Coordinate CandidateGroupAnchor(IReadOnlyList<NearbyJunctionPair> group,
+        IReadOnlyList<LineString> originalBorder)
+    {
+        var points = group.SelectMany(item => new[] { item.Left.BorderPoint, item.Right.BorderPoint })
+            .GroupBy(point => $"{Math.Round(point.X, 8):F8}|{Math.Round(point.Y, 8):F8}", StringComparer.Ordinal)
+            .Select(items => items.First()).ToArray();
+        if (points.Length == 0) return new Coordinate();
+        var origin = points[0].X;
+        var longitude = origin + points.Average(point => NormalizeLongitudeDelta(point.X - origin));
+        if (longitude > 180.0) longitude -= 360.0;
+        if (longitude < -180.0) longitude += 360.0;
+        var latitude = points.Average(point => point.Y);
+        return NearestBorderPoint(new Coordinate(longitude, latitude), originalBorder)?.Point ?? new Coordinate(points[0]);
     }
 
     private static object SerializeJunction(Junction junction) => new
@@ -512,6 +574,24 @@ static partial class GlobalFrontierLab
         var seamNearest = NearestBorderPoint(new Coordinate(-179.9, 0), new[] { seamBorder });
         if (seamNearest is null || HaversineKm(new Coordinate(-179.9, 0), seamNearest.Value.Point) > 12.0)
             throw new InvalidOperationException("Global frontier self-test failed: antimeridian junction lookup used the long way around.");
+
+        if (!IsPotentialFusionCandidate(true, true, true) ||
+            IsPotentialFusionCandidate(false, true, true) ||
+            IsPotentialFusionCandidate(true, false, true) ||
+            IsPotentialFusionCandidate(true, true, false))
+            throw new InvalidOperationException("Global frontier self-test failed: junction fusion classifier did not preserve side, angle/length class, and incidence constraints.");
+        var testBorder = Factory.CreateLineString(new[] { new Coordinate(0, 0), new Coordinate(1, 0) });
+        var j1 = new Junction(1, 2, "AA", new Coordinate(.4, .01), new Coordinate(.4, 0), 100, 90, 1, "transverse");
+        var j2 = new Junction(1, 2, "AA", new Coordinate(.6, .01), new Coordinate(.6, 0), 100, 90, 1, "transverse");
+        var j3 = new Junction(3, 4, "BB", new Coordinate(.5, -.01), new Coordinate(.5, 0), 100, 90, 1, "transverse");
+        var testGroup = new[]
+        {
+            new NearbyJunctionPair(j1, j3, 1, IncidenceSignature(j1, j3)),
+            new NearbyJunctionPair(j2, j3, 1, IncidenceSignature(j2, j3))
+        };
+        if (testGroup[0].IncidenceSignature != testGroup[1].IncidenceSignature ||
+            CandidateGroupAnchor(testGroup, new[] { testBorder }).Distance(new Coordinate(.5, 0)) > 1e-8)
+            throw new InvalidOperationException("Global frontier self-test failed: repeated opposite-side junctions did not receive one deterministic source-border anchor.");
 
         RunReconstructionSelfTests();
 
