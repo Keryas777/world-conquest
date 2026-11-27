@@ -520,8 +520,9 @@ static partial class GlobalFrontierLab
         IReadOnlyList<LineString> coast,
         IReadOnlyDictionary<string, TerritorySource> source)
     {
-        var linework = new List<Geometry>(coast.Count + borders.Count * 2);
-        linework.AddRange(coast);
+        var nodedCoast = NodeCoastlinesAtBorderEndpoints(coast, borders);
+        var linework = new List<Geometry>(nodedCoast.Length + borders.Count * 2);
+        linework.AddRange(nodedCoast);
         foreach (var border in borders)
         {
             var lines = restoredBorders.Contains(border.Key)
@@ -550,12 +551,16 @@ static partial class GlobalFrontierLab
         {
             var expectedAdjacencies = borders.Select(border => border.Key).ToHashSet(StringComparer.Ordinal);
             var directAdjacencies = GetTerritoryAdjacencies(direct.Territories);
-            if (ChangedTerritoryAdjacencies(expectedAdjacencies, directAdjacencies).Length == 0)
+            var adjacencyChanges = ChangedTerritoryAdjacencies(expectedAdjacencies, directAdjacencies);
+            if (adjacencyChanges.Length == 0)
             {
                 Console.WriteLine($"Global reconstruction {method}: pre-noded polygonization accepted; all {expectedAdjacencies.Count} territorial adjacencies preserved.");
                 return direct;
             }
+            Console.WriteLine($"Global reconstruction {method}: pre-noded result faces={direct.FaceCount}, adjacency changes={adjacencyChanges.Length}.");
         }
+        else if (direct is not null)
+            Console.WriteLine($"Global reconstruction {method}: pre-noded result faces={direct.FaceCount}, territories={direct.Territories.Count}/{source.Count}, missing={direct.MissingTerritoryCount}, invalid={direct.InvalidTerritoryCount}, unassigned={direct.UnassignedFaceCount}.");
 
         Console.WriteLine($"Global reconstruction {method}: pre-noded polygonization did not preserve the complete source topology; applying robust line noding.");
         Geometry noded;
@@ -565,6 +570,86 @@ static partial class GlobalFrontierLab
             noded = UnaryUnionOp.Union(linework.Select(line => line.Buffer(0)));
         }
         return PolygonizeTerritoryLinework(noded, source, true);
+    }
+
+    private static LineString[] NodeCoastlinesAtBorderEndpoints(IReadOnlyList<LineString> coast,
+        IReadOnlyList<TerritoryBorder> borders)
+    {
+        if (coast.Count == 0 || borders.Count == 0) return coast.Select(line => (LineString)line.Copy()).ToArray();
+        const double exactContactToleranceDegrees = 1e-12;
+        var index = new STRtree<int>();
+        for (var i = 0; i < coast.Count; i++) index.Insert(coast[i].EnvelopeInternal, i);
+        index.Build();
+        var inserts = coast.Select(_ => new Dictionary<int, List<(double T, Coordinate Point)>>()).ToArray();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var border in borders)
+        foreach (var line in border.SourceLines)
+        foreach (var endpoint in new[] { line.GetCoordinateN(0), line.GetCoordinateN(line.NumPoints - 1) })
+        {
+            var key = $"{Math.Round(endpoint.X, 12):F12}|{Math.Round(endpoint.Y, 12):F12}";
+            if (!seen.Add(key)) continue;
+            var point = Factory.CreatePoint(endpoint);
+            var envelope = new Envelope(endpoint);
+            envelope.ExpandBy(exactContactToleranceDegrees);
+            foreach (var coastIndex in index.Query(envelope))
+            {
+                var coastline = coast[coastIndex];
+                var nearest = DistanceOp.NearestPoints(point, coastline);
+                if (nearest.Length < 2 || nearest[0].Distance(nearest[1]) > exactContactToleranceDegrees) continue;
+                var coordinates = coastline.Coordinates;
+                if (coordinates.Any(coordinate => coordinate.Distance(endpoint) <= exactContactToleranceDegrees)) break;
+
+                var bestDistance = double.PositiveInfinity;
+                var bestSegment = -1;
+                var bestT = 0.0;
+                for (var segment = 0; segment < coordinates.Length - 1; segment++)
+                {
+                    var a = coordinates[segment];
+                    var b = coordinates[segment + 1];
+                    var dx = b.X - a.X;
+                    var dy = b.Y - a.Y;
+                    var lengthSquared = dx * dx + dy * dy;
+                    if (lengthSquared <= 1e-24) continue;
+                    var t = Math.Clamp(((endpoint.X - a.X) * dx + (endpoint.Y - a.Y) * dy) / lengthSquared, 0.0, 1.0);
+                    var x = a.X + t * dx;
+                    var y = a.Y + t * dy;
+                    var distance = Math.Sqrt((endpoint.X - x) * (endpoint.X - x) + (endpoint.Y - y) * (endpoint.Y - y));
+                    if (distance >= bestDistance) continue;
+                    bestDistance = distance;
+                    bestSegment = segment;
+                    bestT = t;
+                }
+                if (bestSegment < 0 || bestT <= 1e-12 || bestT >= 1.0 - 1e-12 || bestDistance > exactContactToleranceDegrees) break;
+                if (!inserts[coastIndex].TryGetValue(bestSegment, out var points))
+                    inserts[coastIndex][bestSegment] = points = new List<(double T, Coordinate Point)>();
+                if (points.Any(item => item.Point.Distance(endpoint) <= exactContactToleranceDegrees)) break;
+                points.Add((bestT, new Coordinate(endpoint)));
+                break;
+            }
+        }
+
+        var output = new LineString[coast.Count];
+        for (var lineIndex = 0; lineIndex < coast.Count; lineIndex++)
+        {
+            var line = coast[lineIndex];
+            if (inserts[lineIndex].Count == 0)
+            {
+                output[lineIndex] = (LineString)line.Copy();
+                continue;
+            }
+            var coordinates = line.Coordinates;
+            var rebuilt = new List<Coordinate>(coordinates.Length + inserts[lineIndex].Values.Sum(points => points.Count));
+            for (var segment = 0; segment < coordinates.Length - 1; segment++)
+            {
+                rebuilt.Add(new Coordinate(coordinates[segment]));
+                if (!inserts[lineIndex].TryGetValue(segment, out var points)) continue;
+                rebuilt.AddRange(points.OrderBy(item => item.T).Select(item => item.Point));
+            }
+            rebuilt.Add(new Coordinate(coordinates[^1]));
+            output[lineIndex] = Factory.CreateLineString(rebuilt.ToArray());
+        }
+        return output;
     }
 
     private static PolygonizationResult PolygonizeTerritoryLinework(Geometry linework,
