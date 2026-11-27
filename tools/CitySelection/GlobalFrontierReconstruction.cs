@@ -6,6 +6,7 @@ using NetTopologySuite.Geometries;
 using NetTopologySuite.Geometries.Utilities;
 using NetTopologySuite.Index.Strtree;
 using NetTopologySuite.Operation.Distance;
+using NetTopologySuite.Operation.Linemerge;
 using NetTopologySuite.Operation.Overlay;
 using NetTopologySuite.Operation.OverlayNG;
 using NetTopologySuite.Operation.Polygonize;
@@ -498,14 +499,20 @@ static partial class GlobalFrontierLab
             Geometry shared;
             try { shared = a.Geometry.Boundary.Intersection(b.Geometry.Boundary); }
             catch { continue; }
-            var lines = EnumerateLines(shared)
+            var pieces = EnumerateLines(shared)
                 .Where(line => !line.IsEmpty && line.NumPoints >= 2 && line.Length > 1e-10)
                 .SelectMany(SplitAtAntimeridian)
                 .Where(line => line.NumPoints >= 2)
+                .ToArray();
+            var merger = new LineMerger();
+            foreach (var piece in pieces) merger.Add(piece);
+            var merged = merger.GetMergedLineStrings().Cast<LineString>()
+                .Where(line => !line.IsEmpty && line.NumPoints >= 2 && line.Length > 1e-10)
                 .OrderBy(line => line.EnvelopeInternal.MinX)
                 .ThenBy(line => line.EnvelopeInternal.MinY)
                 .ThenByDescending(line => line.Length)
                 .ToArray();
+            var lines = merged.Length == 0 && pieces.Length > 0 ? pieces : merged;
             if (lines.Length == 0) continue;
             borders.Add(new TerritoryBorder(TerritoryPairKey(a.Code, b.Code), a.Code, b.Code,
                 a.Owner, b.Owner, lines));
