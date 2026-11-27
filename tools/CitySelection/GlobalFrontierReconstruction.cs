@@ -157,7 +157,12 @@ static partial class GlobalFrontierLab
 
         var methodSummaries = new Dictionary<string, object>(StringComparer.Ordinal);
         var reconstructionMethods = new Dictionary<string, object>(StringComparer.Ordinal);
-        foreach (var method in Methods)
+        foreach (var method in Methods.OrderBy(method => method.Key switch
+                 {
+                     "adaptive" => 0,
+                     "ref40" => 1,
+                     _ => 2
+                 }))
         {
             var methodTimer = Stopwatch.StartNew();
             var robustIntersectionStart = System.Threading.Interlocked.Read(ref _robustIntersectionFallbackCount);
@@ -166,6 +171,7 @@ static partial class GlobalFrontierLab
             var sourceLines = borders.ToDictionary(border => border.Key, border => border.SourceLines,
                 StringComparer.Ordinal);
             var restoredBorders = new HashSet<string>(StringComparer.Ordinal);
+            var locallyRestoredBorders = new HashSet<string>(StringComparer.Ordinal);
             var build = BuildTerritoriesForMethod(method.Key, borders, sourceLines, restoredBorders, coast, territories);
             var changed = ChangedTerritoryAdjacencies(sourceAdjacencies, GetTerritoryAdjacencies(build.Territories));
 
@@ -178,12 +184,17 @@ static partial class GlobalFrontierLab
             if (affectedTerritories.Count > 0)
             {
                 foreach (var border in borders.Where(border => affectedTerritories.Contains(border.A) || affectedTerritories.Contains(border.B)))
-                    if (restoredBorders.Add(border.Key)) sourceLines[border.Key] = border.SourceLines;
-                // The first pass has already proved that a direct polygonization is incomplete.
-                // Avoid repeating that expensive world-wide probe after the local source-contour
-                // reduction; go straight to robust noding for the retry.
+                    if (restoredBorders.Add(border.Key))
+                    {
+                        locallyRestoredBorders.Add(border.Key);
+                        sourceLines[border.Key] = border.SourceLines;
+                    }
+                // Recheck after restoring shared source contours around affected territories.
+                // Keep the retry bounded: the world-wide robust union proved prohibitively slow
+                // on this graph, so an incomplete local result falls back to the complete source
+                // mask network below.
                 build = BuildTerritoriesForMethod(method.Key, borders, sourceLines, restoredBorders, coast, territories,
-                    forceRobustLineNoding: true);
+                    allowRobustLineNoding: false);
                 changed = ChangedTerritoryAdjacencies(sourceAdjacencies, GetTerritoryAdjacencies(build.Territories));
             }
 
@@ -207,9 +218,9 @@ static partial class GlobalFrontierLab
             if (emptyClipTerritories.Count > 0 && !globalSourceFallback)
             {
                 foreach (var border in borders.Where(border => emptyClipTerritories.Contains(border.A) || emptyClipTerritories.Contains(border.B)))
-                    restoredBorders.Add(border.Key);
+                    if (restoredBorders.Add(border.Key)) locallyRestoredBorders.Add(border.Key);
                 build = BuildTerritoriesForMethod(method.Key, borders, sourceLines, restoredBorders, coast, territories,
-                    forceRobustLineNoding: true);
+                    allowRobustLineNoding: false);
                 emptyClipTerritories = FindEmptyClipTerritories(cells, rawVoronoiCells, build.Territories);
                 if (emptyClipTerritories.Count > 0)
                 {
@@ -382,9 +393,13 @@ static partial class GlobalFrontierLab
                 cellAdjacencyCreatedCount = createdCellAdjacencies.Length,
                 cellAdjacencyLost = lostCellAdjacencies,
                 cellAdjacencyCreated = createdCellAdjacencies,
-                locallyRestoredBorderCount = restoredBorders.Count,
-                locallyRestoredBorders = restoredBorders.OrderBy(key => key, StringComparer.Ordinal).ToArray(),
+                locallyRestoredBorderCount = locallyRestoredBorders.Count,
+                locallyRestoredBorders = locallyRestoredBorders.OrderBy(key => key, StringComparer.Ordinal).ToArray(),
+                sourceContourBorderCount = restoredBorders.Count,
                 globalSourceContourFallback = globalSourceFallback,
+                globalSourceContourFallbackReason = globalSourceFallback
+                    ? "Direct and locally restored polygonization did not close the territory graph; the complete shared source-contour network was restored."
+                    : null,
                 robustLineNodingFallback = build.RobustLineNodingFallback,
                 cellFallbackCount = cellFallbacks,
                 deterministicOrdering = "territories, border keys, cells and adjacency pairs sorted ordinally / by stable id",
@@ -418,7 +433,7 @@ static partial class GlobalFrontierLab
                 geometrySha256 = sha,
                 artifactSha256 = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text))).ToLowerInvariant()
             };
-            Console.WriteLine($"Reconstructed {method.Key}: cells={clips.Count}, territories={build.Territories.Count}, valid={clips.Count(item => item.Valid)}/{clips.Count}, local border restores={restoredBorders.Count}, robust line noding={build.RobustLineNodingFallback}, global fallback={globalSourceFallback}, {methodTimer.Elapsed.TotalSeconds:F1}s, {new FileInfo(output).Length:N0} bytes.");
+            Console.WriteLine($"Reconstructed {method.Key}: cells={clips.Count}, territories={build.Territories.Count}, valid={clips.Count(item => item.Valid)}/{clips.Count}, locally restored borders={locallyRestoredBorders.Count}, source-contour borders={restoredBorders.Count}, robust line noding={build.RobustLineNodingFallback}, global fallback={globalSourceFallback}, {methodTimer.Elapsed.TotalSeconds:F1}s, {new FileInfo(output).Length:N0} bytes.");
         }
 
         var summary = new
@@ -526,7 +541,7 @@ static partial class GlobalFrontierLab
         IReadOnlySet<string> restoredBorders,
         IReadOnlyList<LineString> coast,
         IReadOnlyDictionary<string, TerritorySource> source,
-        bool forceRobustLineNoding = false)
+        bool allowRobustLineNoding = false)
     {
         var nodedCoast = NodeCoastlinesAtBorderEndpoints(coast, borders);
         var linework = new List<Geometry>(nodedCoast.Length + borders.Count * 2);
@@ -543,18 +558,11 @@ static partial class GlobalFrontierLab
             }
         }
 
-        if (!forceRobustLineNoding)
+        PolygonizationResult? direct = null;
+        try
         {
             Console.WriteLine($"Global reconstruction {method}: polygonizing {linework.Count:N0} shared/coast line components with the pre-noded fast path.");
-            PolygonizationResult? direct = null;
-            try
-            {
-                direct = PolygonizeTerritoryLinework(Factory.CreateGeometryCollection(linework.ToArray()), source, false);
-            }
-            catch (Exception error)
-            {
-                Console.WriteLine($"Global reconstruction {method}: pre-noded polygonization raised {error.GetType().Name}; trying robust line noding.");
-            }
+            direct = PolygonizeTerritoryLinework(Factory.CreateGeometryCollection(linework.ToArray()), source, false);
 
             if (direct is not null && direct.MissingTerritoryCount == 0 && direct.InvalidTerritoryCount == 0 &&
                 direct.UnassignedFaceCount == 0 && direct.Territories.Count == source.Count)
@@ -572,13 +580,20 @@ static partial class GlobalFrontierLab
             else if (direct is not null)
                 Console.WriteLine($"Global reconstruction {method}: pre-noded result faces={direct.FaceCount}, territories={direct.Territories.Count}/{source.Count}, missing={direct.MissingTerritoryCount}, invalid={direct.InvalidTerritoryCount}, unassigned={direct.UnassignedFaceCount}.");
         }
-        else
+        catch (Exception error)
         {
-            Console.WriteLine($"Global reconstruction {method}: retrying {linework.Count:N0} shared/coast line components with robust noding after local contour restoration.");
+            Console.WriteLine($"Global reconstruction {method}: pre-noded polygonization raised {error.GetType().Name}.");
         }
 
-        if (!forceRobustLineNoding)
-            Console.WriteLine($"Global reconstruction {method}: pre-noded polygonization did not preserve the complete source topology; applying robust line noding.");
+        if (!allowRobustLineNoding)
+        {
+            if (direct is not null)
+                Console.WriteLine($"Global reconstruction {method}: returning the measured pre-noded result for local contour recovery; world-wide robust noding is disabled for this pass.");
+            return direct ?? new PolygonizationResult(new Dictionary<string, Geometry>(StringComparer.Ordinal),
+                0, 0, 0, source.Keys.OrderBy(code => code, StringComparer.Ordinal).ToArray(), Array.Empty<string>());
+        }
+
+        Console.WriteLine($"Global reconstruction {method}: robustly noding {linework.Count:N0} line components after local contour recovery.");
         Geometry noded;
         try { noded = UnaryUnionOp.Union(linework); }
         catch
