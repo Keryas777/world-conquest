@@ -436,7 +436,7 @@ static partial class GlobalFrontierLab
                     !transverse ? "preserve-short-or-boundary-parallel-edge" :
                     "preserve-distinct-incidence",
                 proposedCommonBorderPoint = candidateAnchor is null ? null :
-                    new[] { candidateAnchor.Value.X, candidateAnchor.Value.Y },
+                    new[] { candidateAnchor.X, candidateAnchor.Y },
                 requiresIncidentCellRebuildAndAdjacencyProof = fusionCandidate,
                 fusionApplied = false
             };
