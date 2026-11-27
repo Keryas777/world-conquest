@@ -84,7 +84,7 @@ jobs:
       - name: Run frontier experiments only
         if: steps.scope.outputs.c4_only != 'true' && steps.scope.outputs.frontier_only == 'true'
         run: dotnet run --project tools/CitySelection/CitySelection.csproj --configuration Release -- --frontier-only
-      - name: Run global frontier screening only
+      - name: Run global frontier screening and reconstruction
         if: steps.scope.outputs.global_only == 'true'
         run: dotnet run --project tools/CitySelection/CitySelection.csproj --configuration Release -- --global-frontier-only
       - name: Run full city-selection experiments

@@ -71,6 +71,20 @@ static partial class GlobalFrontierLab
         if (BuildTerritoryBorders(corner).Count != 0)
             throw new InvalidOperationException("Reconstruction self-test failed: point-only contact was counted as a shared border.");
 
+        var testCities = new Dictionary<string, List<City>>(StringComparer.Ordinal)
+        {
+            ["AA"] = new()
+            {
+                new City(11, "west", "AA", .5, .5, 1),
+                new City(12, "east", "AA", .5, 1.5, 1)
+            }
+        };
+        var testRawCells = VoronoiLab.BuildRawWorldCells(testCities,
+            new Dictionary<string, Geometry>(StringComparer.Ordinal) { ["AA"] = Rect(0, 0, 2, 1) });
+        if (testRawCells.Count != 2 || testCities["AA"].Any(city =>
+                !testRawCells[city.Id].Covers(Factory.CreatePoint(new Coordinate(city.Lon, city.Lat)))))
+            throw new InvalidOperationException("Reconstruction self-test failed: Delaunay-backed Voronoi cells did not retain both seed cities.");
+
         var microSegmentA = Factory.CreatePolygon(new[]
         {
             new Coordinate(9.4, 4.0),
@@ -92,6 +106,7 @@ static partial class GlobalFrontierLab
     private static async Task GenerateReconstructionAsync(string outDir, Cell[] cells, Edge[] edges)
     {
         var timer = Stopwatch.StartNew();
+        var phaseTimer = Stopwatch.StartNew();
         Console.WriteLine("Global reconstruction: building canonical territory masks from the published cells.");
         var territories = cells
             .GroupBy(cell => cell.Territory, StringComparer.Ordinal)
@@ -105,6 +120,8 @@ static partial class GlobalFrontierLab
                 if (!geometry.IsValid) geometry = geometry.Buffer(0);
                 return new TerritorySource(group.Key, members[0].Owner, members, geometry);
             }, StringComparer.Ordinal);
+        Console.WriteLine($"Global reconstruction phase: canonical territory masks={territories.Count}, {phaseTimer.Elapsed.TotalSeconds:F1}s.");
+        phaseTimer.Restart();
 
         var selectedCities = territories.ToDictionary(item => item.Key,
             item => item.Value.Cells.Select(cell => new City(cell.Id, cell.Name, cell.Country,
@@ -113,6 +130,8 @@ static partial class GlobalFrontierLab
             territories.ToDictionary(item => item.Key, item => item.Value.Geometry, StringComparer.Ordinal));
         if (rawVoronoiCells.Count != cells.Length)
             throw new InvalidOperationException($"Raw Voronoi reconstruction returned {rawVoronoiCells.Count} cells for {cells.Length} source cities.");
+        Console.WriteLine($"Global reconstruction phase: raw territory-local Voronoi cells={rawVoronoiCells.Count}, {phaseTimer.Elapsed.TotalSeconds:F1}s.");
+        phaseTimer.Restart();
 
         var land = UnaryUnionOp.Union(territories.Values.Select(value => value.Geometry));
         if (!land.IsValid) land = land.Buffer(0);
@@ -129,6 +148,7 @@ static partial class GlobalFrontierLab
         var sourceEmptyTerritories = territories.Values.Count(value => value.Geometry.IsEmpty);
         var sourceInvalidTerritories = territories.Values.Count(value => !value.Geometry.IsValid);
         var edgeDiagnostics = BuildMissingCellEdgeDiagnostics(cells, edges, territories, directBorderKeys);
+        Console.WriteLine($"Global reconstruction phase: land, shared borders and edge diagnostics={borders.Count} borders / {edgeDiagnostics.Length} missing direct cell edges, {phaseTimer.Elapsed.TotalSeconds:F1}s.");
         var graphDigest = Convert.ToHexString(SHA256.HashData(
             await File.ReadAllBytesAsync(Path.Combine(outDir, "voronoi-graph.json")))).ToLowerInvariant();
         var matchesPreviouslyAuditedGraph = graphDigest == "1a472b806de5fcc68df5271da2e1f4c477fc2657bee7eae94574fe14f19278c7";
@@ -230,8 +250,9 @@ static partial class GlobalFrontierLab
                     DistanceOp.NearestPoints(geometry, sourceSeed)[0]) * 1000.0;
                 var before = SphericalAreaKm2(sourceCell.Geometry);
                 var after = SphericalAreaKm2(geometry);
-                var gained = SphericalAreaKm2(SafeDifference(geometry, sourceCell.Geometry));
-                var lost = SphericalAreaKm2(SafeDifference(sourceCell.Geometry, geometry));
+                var overlapArea = SphericalAreaKm2(SafeIntersection(geometry, sourceCell.Geometry));
+                var gained = Math.Max(0, after - overlapArea);
+                var lost = Math.Max(0, before - overlapArea);
                 clips.Add(new CellBuild(sourceCell, geometry, before, after, gained, lost,
                     sourceCovered, rebuiltCovered, distanceMeters, fallback, geometry.IsValid));
             }
@@ -247,14 +268,17 @@ static partial class GlobalFrontierLab
             foreach (var territory in territories)
             {
                 var cellUnion = rebuiltCellUnionByTerritory[territory.Key];
-                cellCoverageGaps[territory.Key] = SphericalAreaKm2(SafeDifference(build.Territories[territory.Key], cellUnion));
+                var targetArea = SphericalAreaKm2(build.Territories[territory.Key]);
+                var coveredArea = SphericalAreaKm2(SafeIntersection(build.Territories[territory.Key], cellUnion));
+                cellCoverageGaps[territory.Key] = Math.Max(0, targetArea - coveredArea);
                 var sum = clips.Where(item => item.Cell.Territory == territory.Key).Sum(item => item.RebuiltAreaKm2);
                 cellOverlaps[territory.Key] = Math.Max(0, sum - SphericalAreaKm2(cellUnion));
             }
 
             var rebuiltWorld = UnaryUnionOp.Union(rebuiltCellUnionByTerritory.Values);
-            var worldGained = SphericalAreaKm2(SafeDifference(rebuiltWorld, land));
-            var worldLost = SphericalAreaKm2(SafeDifference(land, rebuiltWorld));
+            var landOverlapArea = SphericalAreaKm2(SafeIntersection(rebuiltWorld, land));
+            var worldGained = Math.Max(0, SphericalAreaKm2(rebuiltWorld) - landOverlapArea);
+            var worldLost = Math.Max(0, SphericalAreaKm2(land) - landOverlapArea);
             var rebuiltAdjacencies = BuildCellAdjacencies(clips);
             var sourceCellAdjacencies = edges.Select(edge => CellPairKey(edge.A, edge.B)).ToHashSet(StringComparer.Ordinal);
             var lostCellAdjacencies = sourceCellAdjacencies.Except(rebuiltAdjacencies).OrderBy(key => key, StringComparer.Ordinal).ToArray();
@@ -270,6 +294,7 @@ static partial class GlobalFrontierLab
                 {
                     var before = SphericalAreaKm2(territory.Geometry);
                     var after = SphericalAreaKm2(build.Territories[territory.Code]);
+                    var overlap = SphericalAreaKm2(SafeIntersection(build.Territories[territory.Code], territory.Geometry));
                     return new
                     {
                         territory = territory.Code,
@@ -277,8 +302,8 @@ static partial class GlobalFrontierLab
                         cellCount = territory.Cells.Length,
                         areaBeforeKm2 = before,
                         areaAfterKm2 = after,
-                        gainedKm2 = SphericalAreaKm2(SafeDifference(build.Territories[territory.Code], territory.Geometry)),
-                        lostKm2 = SphericalAreaKm2(SafeDifference(territory.Geometry, build.Territories[territory.Code])),
+                        gainedKm2 = Math.Max(0, after - overlap),
+                        lostKm2 = Math.Max(0, before - overlap),
                         relativeAreaChange = before == 0 ? 0 : (after - before) / before,
                         cellCoverageGapKm2 = cellCoverageGaps[territory.Code],
                         cellOverlapKm2 = cellOverlaps[territory.Code]
@@ -607,8 +632,15 @@ static partial class GlobalFrontierLab
         foreach (var cell in cells)
         {
             if (!territories.TryGetValue(cell.Territory, out var territory) ||
-                !rawCells.TryGetValue(cell.Id, out var raw) || SafeIntersection(raw, territory).IsEmpty)
+                !rawCells.TryGetValue(cell.Id, out var raw))
+            {
                 output.Add(cell.Territory);
+                continue;
+            }
+
+            var seed = Factory.CreatePoint(new Coordinate(cell.Longitude, cell.Latitude));
+            if (territory.Covers(seed)) continue;
+            if (SafeIntersection(raw, territory).IsEmpty) output.Add(cell.Territory);
         }
         return output;
     }
