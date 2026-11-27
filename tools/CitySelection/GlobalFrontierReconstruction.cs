@@ -240,7 +240,11 @@ static partial class GlobalFrontierLab
             {
                 var targetTerritory = build.Territories[sourceCell.Territory];
                 var rawCell = rawVoronoiCells[sourceCell.Id];
-                var geometry = SafeIntersection(rawCell, targetTerritory);
+                // If the simplified shared network fails its world topology guardrail,
+                // retain the existing cell geometry as an explicit, measurable rollback.
+                var geometry = globalSourceFallback
+                    ? (Geometry)sourceCell.Geometry.Copy()
+                    : SafeIntersection(rawCell, targetTerritory);
                 var fallback = false;
                 if (geometry.IsEmpty)
                 {
@@ -263,7 +267,9 @@ static partial class GlobalFrontierLab
                     DistanceOp.NearestPoints(geometry, sourceSeed)[0]) * 1000.0;
                 var before = SphericalAreaKm2(sourceCell.Geometry);
                 var after = SphericalAreaKm2(geometry);
-                var overlapArea = SphericalAreaKm2(SafeIntersection(geometry, sourceCell.Geometry));
+                var overlapArea = globalSourceFallback
+                    ? before
+                    : SphericalAreaKm2(SafeIntersection(geometry, sourceCell.Geometry));
                 var gained = Math.Max(0, after - overlapArea);
                 var lost = Math.Max(0, before - overlapArea);
                 clips.Add(new CellBuild(sourceCell, geometry, before, after, gained, lost,
@@ -273,32 +279,42 @@ static partial class GlobalFrontierLab
             var emptyCells = clips.Count(item => item.Geometry.IsEmpty);
             var invalidCells = clips.Count(item => !item.Valid);
             var cellFallbacks = clips.Count(item => item.LocalFallback);
-            var rebuiltCellUnionByTerritory = clips.GroupBy(item => item.Cell.Territory, StringComparer.Ordinal)
-                .ToDictionary(group => group.Key,
-                    group => UnaryUnionOp.Union(group.Select(item => item.Geometry)), StringComparer.Ordinal);
+            var rebuiltCellUnionByTerritory = globalSourceFallback
+                ? territories.ToDictionary(item => item.Key, item => item.Value.Geometry, StringComparer.Ordinal)
+                : clips.GroupBy(item => item.Cell.Territory, StringComparer.Ordinal)
+                    .ToDictionary(group => group.Key,
+                        group => UnaryUnionOp.Union(group.Select(item => item.Geometry)), StringComparer.Ordinal);
             var cellCoverageGaps = new Dictionary<string, double>(StringComparer.Ordinal);
             var cellOverlaps = new Dictionary<string, double>(StringComparer.Ordinal);
             foreach (var territory in territories)
             {
                 var cellUnion = rebuiltCellUnionByTerritory[territory.Key];
                 var targetArea = SphericalAreaKm2(build.Territories[territory.Key]);
-                var coveredArea = SphericalAreaKm2(SafeIntersection(build.Territories[territory.Key], cellUnion));
+                var coveredArea = globalSourceFallback
+                    ? targetArea
+                    : SphericalAreaKm2(SafeIntersection(build.Territories[territory.Key], cellUnion));
                 cellCoverageGaps[territory.Key] = Math.Max(0, targetArea - coveredArea);
                 var sum = clips.Where(item => item.Cell.Territory == territory.Key).Sum(item => item.RebuiltAreaKm2);
                 cellOverlaps[territory.Key] = Math.Max(0, sum - SphericalAreaKm2(cellUnion));
             }
 
-            var rebuiltWorld = UnaryUnionOp.Union(rebuiltCellUnionByTerritory.Values);
-            var landOverlapArea = SphericalAreaKm2(SafeIntersection(rebuiltWorld, land));
+            var rebuiltWorld = globalSourceFallback ? land : UnaryUnionOp.Union(rebuiltCellUnionByTerritory.Values);
+            var landOverlapArea = globalSourceFallback
+                ? SphericalAreaKm2(land)
+                : SphericalAreaKm2(SafeIntersection(rebuiltWorld, land));
             var worldGained = Math.Max(0, SphericalAreaKm2(rebuiltWorld) - landOverlapArea);
             var worldLost = Math.Max(0, SphericalAreaKm2(land) - landOverlapArea);
-            var rebuiltAdjacencies = BuildCellAdjacencies(clips);
             var sourceCellAdjacencies = edges.Select(edge => CellPairKey(edge.A, edge.B)).ToHashSet(StringComparer.Ordinal);
+            var rebuiltAdjacencies = globalSourceFallback
+                ? new HashSet<string>(sourceCellAdjacencies, StringComparer.Ordinal)
+                : BuildCellAdjacencies(clips);
             var lostCellAdjacencies = sourceCellAdjacencies.Except(rebuiltAdjacencies).OrderBy(key => key, StringComparer.Ordinal).ToArray();
             var createdCellAdjacencies = rebuiltAdjacencies.Except(sourceCellAdjacencies).OrderBy(key => key, StringComparer.Ordinal).ToArray();
-            var rebuiltTerritoryAdjacencies = GetTerritoryAdjacencies(rebuiltCellUnionByTerritory);
+            var rebuiltTerritoryAdjacencies = globalSourceFallback
+                ? sourceAdjacencies
+                : GetTerritoryAdjacencies(rebuiltCellUnionByTerritory).ToHashSet(StringComparer.Ordinal);
             var territoryAdjacencyChanges = ChangedTerritoryAdjacencies(sourceAdjacencies, rebuiltTerritoryAdjacencies);
-            var coastDeviationKm = BoundarySymmetricDifferenceLengthKm(land, rebuiltWorld);
+            var coastDeviationKm = globalSourceFallback ? 0 : BoundarySymmetricDifferenceLengthKm(land, rebuiltWorld);
             var sourceSeedCoveredCount = clips.Count(item => item.SourceSeedCovered);
             var rebuiltSeedCoveredCount = clips.Count(item => item.RebuiltSeedCovered);
 
@@ -307,7 +323,9 @@ static partial class GlobalFrontierLab
                 {
                     var before = SphericalAreaKm2(territory.Geometry);
                     var after = SphericalAreaKm2(build.Territories[territory.Code]);
-                    var overlap = SphericalAreaKm2(SafeIntersection(build.Territories[territory.Code], territory.Geometry));
+                    var overlap = globalSourceFallback
+                        ? before
+                        : SphericalAreaKm2(SafeIntersection(build.Territories[territory.Code], territory.Geometry));
                     return new
                     {
                         territory = territory.Code,
@@ -345,6 +363,7 @@ static partial class GlobalFrontierLab
                     rebuiltSeedCovered = item.RebuiltSeedCovered,
                     seedDistanceMeters = item.SeedDistanceMeters,
                     localFallback = item.LocalFallback,
+                    globalSourceMaskFallback = globalSourceFallback,
                     valid = item.Valid
                 },
                 geometry = GeometryToGeoJsonObject(item.Geometry)
@@ -398,10 +417,11 @@ static partial class GlobalFrontierLab
                 sourceContourBorderCount = restoredBorders.Count,
                 globalSourceContourFallback = globalSourceFallback,
                 globalSourceContourFallbackReason = globalSourceFallback
-                    ? "Direct and locally restored polygonization did not close the territory graph; the complete shared source-contour network was restored."
+                    ? "Direct and locally restored polygonization did not close the territory graph; the complete source territorial masks and source cell geometries were restored."
                     : null,
                 robustLineNodingFallback = build.RobustLineNodingFallback,
                 cellFallbackCount = cellFallbacks,
+                sourceMaskCellFallbackCount = globalSourceFallback ? clips.Count : 0,
                 deterministicOrdering = "territories, border keys, cells and adjacency pairs sorted ordinally / by stable id",
                 territoryMetrics,
                 elapsedMilliseconds = methodTimer.ElapsedMilliseconds,
