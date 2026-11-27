@@ -2,15 +2,18 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using NetTopologySuite.Algorithm;
 using NetTopologySuite.Geometries;
 using NetTopologySuite.Geometries.Utilities;
 using NetTopologySuite.Index.Strtree;
+using NetTopologySuite.Noding;
 using NetTopologySuite.Operation.Distance;
 using NetTopologySuite.Operation.Linemerge;
 using NetTopologySuite.Operation.Overlay;
 using NetTopologySuite.Operation.OverlayNG;
 using NetTopologySuite.Operation.Polygonize;
 using NetTopologySuite.Operation.Union;
+using NetTopologySuite.Operation.Valid;
 using NetTopologySuite.Precision;
 
 static partial class GlobalFrontierLab
@@ -22,9 +25,10 @@ static partial class GlobalFrontierLab
     private sealed record TerritorySource(string Code, string Owner, Cell[] Cells, Geometry Geometry);
     private sealed record TerritoryBorder(string Key, string A, string B, string OwnerA, string OwnerB,
         LineString[] SourceLines);
+    private sealed record TerritoryOverlap(string A, string B, double AreaKm2);
     private sealed record PolygonizationResult(Dictionary<string, Geometry> Territories,
         int FaceCount, int UnassignedFaceCount, int ExcludedWaterFaceCount,
-        string[] MissingTerritories, string[] InvalidTerritories, bool RobustLineNodingFallback = false)
+        string[] MissingTerritories, string[] InvalidTerritories, bool FullUnionNodingFallback = false)
     {
         public int MissingTerritoryCount => MissingTerritories.Length;
         public int InvalidTerritoryCount => InvalidTerritories.Length;
@@ -32,7 +36,7 @@ static partial class GlobalFrontierLab
     private sealed record CellBuild(Cell Cell, Geometry Geometry, double SourceAreaKm2,
         double RebuiltAreaKm2, double GainedAreaKm2, double LostAreaKm2,
         bool SourceSeedCovered, bool RebuiltSeedCovered, double SeedDistanceMeters,
-        bool LocalFallback, bool Valid);
+        bool LocalFallback, bool GeometryRepaired, bool Valid);
 
     private static void RunReconstructionSelfTests()
     {
@@ -60,7 +64,7 @@ static partial class GlobalFrontierLab
             var second = BuildTerritoriesForMethod(method.Key, borders, lineMap, new HashSet<string>(), coast, source);
             if (first.MissingTerritoryCount != 0 || first.InvalidTerritoryCount != 0 || first.UnassignedFaceCount != 0 ||
                 GetTerritoryAdjacencies(first.Territories).Count != 1 ||
-                first.RobustLineNodingFallback || second.RobustLineNodingFallback ||
+                first.FullUnionNodingFallback || second.FullUnionNodingFallback ||
                 source.Keys.Any(code => !first.Territories[code].EqualsTopologically(second.Territories[code])))
                 throw new InvalidOperationException($"Reconstruction self-test failed: {method.Key} did not preserve shared topology and deterministic faces.");
         }
@@ -103,6 +107,18 @@ static partial class GlobalFrontierLab
         var robustDifference = OverlayAfterPrecisionReduction(microSegmentA, microSegmentB, SpatialFunction.Difference);
         if (robustDifference.IsEmpty || !robustDifference.IsValid)
             throw new InvalidOperationException("Reconstruction self-test failed: a near-zero edge difference was not resolved as a valid polygon.");
+
+        var crossingLines = Factory.CreateGeometryCollection(new Geometry[]
+        {
+            Factory.CreateLineString(new[] { new Coordinate(0, 0), new Coordinate(2, 0), new Coordinate(2, 2), new Coordinate(0, 2), new Coordinate(0, 0) }),
+            Factory.CreateLineString(new[] { new Coordinate(0, 0), new Coordinate(2, 2) }),
+            Factory.CreateLineString(new[] { new Coordinate(0, 2), new Coordinate(2, 0) })
+        });
+        var nodedCrossing = NodeLinework(crossingLines);
+        var crossingPolygonizer = new Polygonizer();
+        crossingPolygonizer.Add(nodedCrossing);
+        if (crossingPolygonizer.GetPolygons().Count != 4)
+            throw new InvalidOperationException("Reconstruction self-test failed: indexed line noding did not split crossing boundaries into four valid faces.");
     }
 
     private static async Task GenerateReconstructionAsync(string outDir, Cell[] cells, Edge[] edges)
@@ -149,6 +165,47 @@ static partial class GlobalFrontierLab
         var sourceEmptyCells = cells.Count(cell => cell.Geometry.IsEmpty);
         var sourceEmptyTerritories = territories.Values.Count(value => value.Geometry.IsEmpty);
         var sourceInvalidTerritories = territories.Values.Count(value => !value.Geometry.IsValid);
+        var sourceInvalidCellDetails = cells.Where(cell => !cell.Geometry.IsValid || cell.Geometry.IsEmpty)
+            .OrderBy(cell => cell.Id)
+            .Select(cell =>
+            {
+                var validation = cell.Geometry.IsEmpty ? null : new IsValidOp(cell.Geometry).ValidationError;
+                var coordinate = validation?.Coordinate;
+                return new
+                {
+                    id = cell.Id,
+                    name = cell.Name,
+                    territory = cell.Territory,
+                    owner = cell.Owner,
+                    empty = cell.Geometry.IsEmpty,
+                    invalid = !cell.Geometry.IsValid,
+                    geometryType = cell.Geometry.GeometryType,
+                    validityError = validation?.Message,
+                    validityErrorType = validation?.ErrorType.ToString(),
+                    validityErrorCoordinate = coordinate is null ? null : new[] { coordinate.X, coordinate.Y }
+                };
+            })
+            .ToArray();
+        var sourceSeedAudit = cells.OrderBy(cell => cell.Id).Select(cell =>
+        {
+            var seed = Factory.CreatePoint(new Coordinate(cell.Longitude, cell.Latitude));
+            return new
+            {
+                cell.Id,
+                cell.Name,
+                territory = cell.Territory,
+                owner = cell.Owner,
+                latitude = cell.Latitude,
+                longitude = cell.Longitude,
+                seedInsideTerritory = territories[cell.Territory].Geometry.Covers(seed),
+                seedCoveredByCell = cell.Geometry.Covers(seed)
+            };
+        }).ToArray();
+        var sourceSeedAnomalies = sourceSeedAudit
+            .Where(item => !item.seedInsideTerritory || !item.seedCoveredByCell)
+            .ToArray();
+        var sourceTerritoryOverlaps = BuildTerritoryOverlapDiagnostics(territories.ToDictionary(
+            item => item.Key, item => item.Value.Geometry, StringComparer.Ordinal));
         var edgeDiagnostics = BuildMissingCellEdgeDiagnostics(cells, edges, territories, directBorderKeys);
         Console.WriteLine($"Global reconstruction phase: land, shared borders and edge diagnostics={borders.Count} borders / {edgeDiagnostics.Length} missing direct cell edges, {phaseTimer.Elapsed.TotalSeconds:F1}s.");
         var graphDigest = Convert.ToHexString(SHA256.HashData(
@@ -174,6 +231,10 @@ static partial class GlobalFrontierLab
             var locallyRestoredBorders = new HashSet<string>(StringComparer.Ordinal);
             var build = BuildTerritoriesForMethod(method.Key, borders, sourceLines, restoredBorders, coast, territories);
             var changed = ChangedTerritoryAdjacencies(sourceAdjacencies, GetTerritoryAdjacencies(build.Territories));
+            var initialPolygonization = build;
+            var initialAdjacencyChanges = changed.ToArray();
+            PolygonizationResult? recoveryPolygonization = null;
+            string[] recoveryAdjacencyChanges = Array.Empty<string>();
 
             // First attempt a local source-contour fallback around territories whose simplified
             // linework loses a face or changes an adjacency. Shared border linework is restored
@@ -181,6 +242,7 @@ static partial class GlobalFrontierLab
             var affectedTerritories = changed.SelectMany(pair => new[] { PairA(pair), PairB(pair) })
                 .Concat(build.MissingTerritories).Concat(build.InvalidTerritories)
                 .Distinct(StringComparer.Ordinal).ToHashSet(StringComparer.Ordinal);
+            var globalSourceFallback = false;
             if (affectedTerritories.Count > 0)
             {
                 foreach (var border in borders.Where(border => affectedTerritories.Contains(border.A) || affectedTerritories.Contains(border.B)))
@@ -189,16 +251,31 @@ static partial class GlobalFrontierLab
                         locallyRestoredBorders.Add(border.Key);
                         sourceLines[border.Key] = border.SourceLines;
                     }
-                // Recheck after restoring shared source contours around affected territories.
-                // Keep the retry bounded: the world-wide robust union proved prohibitively slow
-                // on this graph, so an incomplete local result falls back to the complete source
-                // mask network below.
-                build = BuildTerritoriesForMethod(method.Key, borders, sourceLines, restoredBorders, coast, territories,
-                    allowRobustLineNoding: false);
-                changed = ChangedTerritoryAdjacencies(sourceAdjacencies, GetTerritoryAdjacencies(build.Territories));
+                if (restoredBorders.Count == borders.Count)
+                {
+                    // A retry with every original border would have no simplified edge left to
+                    // test. Keep the source masks directly and record this as a world fallback.
+                    globalSourceFallback = true;
+                    build = new PolygonizationResult(
+                        territories.ToDictionary(item => item.Key, item => item.Value.Geometry, StringComparer.Ordinal),
+                        build.FaceCount, build.UnassignedFaceCount, build.ExcludedWaterFaceCount,
+                        Array.Empty<string>(), Array.Empty<string>());
+                    changed = Array.Empty<string>();
+                }
+                else
+                {
+                    // Recheck after restoring shared source contours around affected territories.
+                    // Keep the retry bounded: the world-wide robust union proved prohibitively slow
+                    // on this graph, so an incomplete local result falls back to the complete source
+                    // mask network below.
+                    build = BuildTerritoriesForMethod(method.Key, borders, sourceLines, restoredBorders, coast, territories,
+                        allowFullUnionNodingFallback: false);
+                    changed = ChangedTerritoryAdjacencies(sourceAdjacencies, GetTerritoryAdjacencies(build.Territories));
+                    recoveryPolygonization = build;
+                    recoveryAdjacencyChanges = changed.ToArray();
+                }
             }
 
-            var globalSourceFallback = false;
             if (build.MissingTerritoryCount > 0 || build.InvalidTerritoryCount > 0 || changed.Length > 0 ||
                 build.UnassignedFaceCount > 0)
             {
@@ -214,13 +291,18 @@ static partial class GlobalFrontierLab
                 changed = Array.Empty<string>();
             }
 
-            var emptyClipTerritories = FindEmptyClipTerritories(cells, rawVoronoiCells, build.Territories);
+            var emptyClipTerritories = globalSourceFallback
+                ? new HashSet<string>(StringComparer.Ordinal)
+                : FindEmptyClipTerritories(cells, rawVoronoiCells, build.Territories);
             if (emptyClipTerritories.Count > 0 && !globalSourceFallback)
             {
                 foreach (var border in borders.Where(border => emptyClipTerritories.Contains(border.A) || emptyClipTerritories.Contains(border.B)))
                     if (restoredBorders.Add(border.Key)) locallyRestoredBorders.Add(border.Key);
                 build = BuildTerritoriesForMethod(method.Key, borders, sourceLines, restoredBorders, coast, territories,
-                    allowRobustLineNoding: false);
+                    allowFullUnionNodingFallback: false);
+                recoveryPolygonization = build;
+                recoveryAdjacencyChanges = ChangedTerritoryAdjacencies(sourceAdjacencies,
+                    GetTerritoryAdjacencies(build.Territories));
                 emptyClipTerritories = FindEmptyClipTerritories(cells, rawVoronoiCells, build.Territories);
                 if (emptyClipTerritories.Count > 0)
                 {
@@ -246,6 +328,7 @@ static partial class GlobalFrontierLab
                     ? (Geometry)sourceCell.Geometry.Copy()
                     : SafeIntersection(rawCell, targetTerritory);
                 var fallback = false;
+                var geometryRepaired = false;
                 if (geometry.IsEmpty)
                 {
                     // A city cell may not disappear. Restore that territory and all of its
@@ -253,11 +336,16 @@ static partial class GlobalFrontierLab
                     geometry = sourceCell.Geometry;
                     fallback = true;
                 }
-                if (!geometry.IsValid) geometry = geometry.Buffer(0);
+                if (!geometry.IsValid)
+                {
+                    geometry = geometry.Buffer(0);
+                    geometryRepaired = true;
+                }
                 if (geometry.IsEmpty || !geometry.IsValid)
                 {
                     geometry = sourceCell.Geometry.Buffer(0);
                     fallback = true;
+                    geometryRepaired = true;
                 }
                 var sourceSeed = Factory.CreatePoint(new Coordinate(sourceCell.Longitude, sourceCell.Latitude));
                 var sourceCovered = sourceCell.Geometry.Covers(sourceSeed);
@@ -267,54 +355,48 @@ static partial class GlobalFrontierLab
                     DistanceOp.NearestPoints(geometry, sourceSeed)[0]) * 1000.0;
                 var before = SphericalAreaKm2(sourceCell.Geometry);
                 var after = SphericalAreaKm2(geometry);
-                var overlapArea = globalSourceFallback
-                    ? before
-                    : SphericalAreaKm2(SafeIntersection(geometry, sourceCell.Geometry));
+                var comparisonSource = sourceCell.Geometry.IsValid
+                    ? sourceCell.Geometry
+                    : GeometryFixer.Fix(sourceCell.Geometry);
+                var overlapArea = SphericalAreaKm2(SafeIntersection(geometry, comparisonSource));
                 var gained = Math.Max(0, after - overlapArea);
                 var lost = Math.Max(0, before - overlapArea);
                 clips.Add(new CellBuild(sourceCell, geometry, before, after, gained, lost,
-                    sourceCovered, rebuiltCovered, distanceMeters, fallback, geometry.IsValid));
+                    sourceCovered, rebuiltCovered, distanceMeters, fallback, geometryRepaired, geometry.IsValid));
             }
 
             var emptyCells = clips.Count(item => item.Geometry.IsEmpty);
             var invalidCells = clips.Count(item => !item.Valid);
             var cellFallbacks = clips.Count(item => item.LocalFallback);
-            var rebuiltCellUnionByTerritory = globalSourceFallback
-                ? territories.ToDictionary(item => item.Key, item => item.Value.Geometry, StringComparer.Ordinal)
-                : clips.GroupBy(item => item.Cell.Territory, StringComparer.Ordinal)
-                    .ToDictionary(group => group.Key,
-                        group => UnaryUnionOp.Union(group.Select(item => item.Geometry)), StringComparer.Ordinal);
+            var cellGeometryRepairs = clips.Count(item => item.GeometryRepaired);
+            var rebuiltCellUnionByTerritory = clips.GroupBy(item => item.Cell.Territory, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key,
+                    group => UnaryUnionOp.Union(group.Select(item => item.Geometry)), StringComparer.Ordinal);
             var cellCoverageGaps = new Dictionary<string, double>(StringComparer.Ordinal);
             var cellOverlaps = new Dictionary<string, double>(StringComparer.Ordinal);
             foreach (var territory in territories)
             {
                 var cellUnion = rebuiltCellUnionByTerritory[territory.Key];
                 var targetArea = SphericalAreaKm2(build.Territories[territory.Key]);
-                var coveredArea = globalSourceFallback
-                    ? targetArea
-                    : SphericalAreaKm2(SafeIntersection(build.Territories[territory.Key], cellUnion));
+                var coveredArea = SphericalAreaKm2(SafeIntersection(build.Territories[territory.Key], cellUnion));
                 cellCoverageGaps[territory.Key] = Math.Max(0, targetArea - coveredArea);
                 var sum = clips.Where(item => item.Cell.Territory == territory.Key).Sum(item => item.RebuiltAreaKm2);
                 cellOverlaps[territory.Key] = Math.Max(0, sum - SphericalAreaKm2(cellUnion));
             }
 
-            var rebuiltWorld = globalSourceFallback ? land : UnaryUnionOp.Union(rebuiltCellUnionByTerritory.Values);
-            var landOverlapArea = globalSourceFallback
-                ? SphericalAreaKm2(land)
-                : SphericalAreaKm2(SafeIntersection(rebuiltWorld, land));
+            var rebuiltWorld = UnaryUnionOp.Union(rebuiltCellUnionByTerritory.Values);
+            var landOverlapArea = SphericalAreaKm2(SafeIntersection(rebuiltWorld, land));
             var worldGained = Math.Max(0, SphericalAreaKm2(rebuiltWorld) - landOverlapArea);
             var worldLost = Math.Max(0, SphericalAreaKm2(land) - landOverlapArea);
             var sourceCellAdjacencies = edges.Select(edge => CellPairKey(edge.A, edge.B)).ToHashSet(StringComparer.Ordinal);
-            var rebuiltAdjacencies = globalSourceFallback
-                ? new HashSet<string>(sourceCellAdjacencies, StringComparer.Ordinal)
-                : BuildCellAdjacencies(clips);
+            var rebuiltAdjacencies = BuildCellAdjacencies(clips);
             var lostCellAdjacencies = sourceCellAdjacencies.Except(rebuiltAdjacencies).OrderBy(key => key, StringComparer.Ordinal).ToArray();
             var createdCellAdjacencies = rebuiltAdjacencies.Except(sourceCellAdjacencies).OrderBy(key => key, StringComparer.Ordinal).ToArray();
-            var rebuiltTerritoryAdjacencies = globalSourceFallback
-                ? sourceAdjacencies
-                : GetTerritoryAdjacencies(rebuiltCellUnionByTerritory).ToHashSet(StringComparer.Ordinal);
+            var rebuiltTerritoryAdjacencies = GetTerritoryAdjacencies(build.Territories)
+                .ToHashSet(StringComparer.Ordinal);
             var territoryAdjacencyChanges = ChangedTerritoryAdjacencies(sourceAdjacencies, rebuiltTerritoryAdjacencies);
-            var coastDeviationKm = globalSourceFallback ? 0 : BoundarySymmetricDifferenceLengthKm(land, rebuiltWorld);
+            var rebuiltTerritoryOverlaps = BuildTerritoryOverlapDiagnostics(build.Territories);
+            var coastDeviationKm = BoundarySymmetricDifferenceLengthKm(land, rebuiltWorld);
             var sourceSeedCoveredCount = clips.Count(item => item.SourceSeedCovered);
             var rebuiltSeedCoveredCount = clips.Count(item => item.RebuiltSeedCovered);
 
@@ -363,6 +445,7 @@ static partial class GlobalFrontierLab
                     rebuiltSeedCovered = item.RebuiltSeedCovered,
                     seedDistanceMeters = item.SeedDistanceMeters,
                     localFallback = item.LocalFallback,
+                    geometryRepaired = item.GeometryRepaired,
                     globalSourceMaskFallback = globalSourceFallback,
                     valid = item.Valid
                 },
@@ -382,6 +465,26 @@ static partial class GlobalFrontierLab
                 unassignedPolygonFaceCount = build.UnassignedFaceCount,
                 excludedWaterFaceCount = build.ExcludedWaterFaceCount,
                 polygonizedFaceCount = build.FaceCount,
+                initialPolygonization = new
+                {
+                    faceCount = initialPolygonization.FaceCount,
+                    assignedTerritoryCount = initialPolygonization.Territories.Count,
+                    missingTerritories = initialPolygonization.MissingTerritories,
+                    invalidTerritories = initialPolygonization.InvalidTerritories,
+                    unassignedFaceCount = initialPolygonization.UnassignedFaceCount,
+                    excludedWaterFaceCount = initialPolygonization.ExcludedWaterFaceCount,
+                    changedTerritoryAdjacencies = initialAdjacencyChanges
+                },
+                recoveryPolygonization = recoveryPolygonization is null ? null : new
+                {
+                    faceCount = recoveryPolygonization.FaceCount,
+                    assignedTerritoryCount = recoveryPolygonization.Territories.Count,
+                    missingTerritories = recoveryPolygonization.MissingTerritories,
+                    invalidTerritories = recoveryPolygonization.InvalidTerritories,
+                    unassignedFaceCount = recoveryPolygonization.UnassignedFaceCount,
+                    excludedWaterFaceCount = recoveryPolygonization.ExcludedWaterFaceCount,
+                    changedTerritoryAdjacencies = recoveryAdjacencyChanges
+                },
                 worldGainedKm2 = worldGained,
                 worldLostKm2 = worldLost,
                 cellGainedKm2 = clips.Sum(item => item.GainedAreaKm2),
@@ -400,6 +503,9 @@ static partial class GlobalFrontierLab
                 rebuiltTerritoryHoleCount = build.Territories.Values.Sum(PolygonHoleCount),
                 sourceTerritoryAdjacencyCount = sourceAdjacencies.Count,
                 rebuiltTerritoryAdjacencyCount = rebuiltTerritoryAdjacencies.Count,
+                rebuiltTerritoryOverlapPairCount = rebuiltTerritoryOverlaps.Length,
+                rebuiltTerritoryOverlapPairwiseAreaKm2 = rebuiltTerritoryOverlaps.Sum(item => item.AreaKm2),
+                rebuiltTerritoryOverlaps,
                 territoryAdjacencyLost = ChangedTerritoryAdjacencies(sourceAdjacencies, rebuiltTerritoryAdjacencies)
                     .Where(key => key.StartsWith("lost:", StringComparison.Ordinal))
                     .Select(key => key[5..]).OrderBy(key => key, StringComparer.Ordinal).ToArray(),
@@ -419,9 +525,26 @@ static partial class GlobalFrontierLab
                 globalSourceContourFallbackReason = globalSourceFallback
                     ? "Direct and locally restored polygonization did not close the territory graph; the complete source territorial masks and source cell geometries were restored."
                     : null,
-                robustLineNodingFallback = build.RobustLineNodingFallback,
+                indexedLineNodingApplied = true,
+                fullUnionNodingFallback = build.FullUnionNodingFallback,
                 cellFallbackCount = cellFallbacks,
+                cellGeometryRepairCount = cellGeometryRepairs,
                 sourceMaskCellFallbackCount = globalSourceFallback ? clips.Count : 0,
+                topologyValidated = !globalSourceFallback &&
+                    clips.Count == cells.Length && emptyCells == 0 && invalidCells == 0 &&
+                    build.Territories.Count == territories.Count && build.MissingTerritoryCount == 0 &&
+                    build.InvalidTerritoryCount == 0 && build.UnassignedFaceCount == 0 &&
+                    lostCellAdjacencies.Length == 0 && createdCellAdjacencies.Length == 0 &&
+                    territoryAdjacencyChanges.Length == 0 && rebuiltTerritoryOverlaps.Length == 0 &&
+                    cellCoverageGaps.Values.Sum() <= 1e-4 && cellOverlaps.Values.Sum() <= 1e-4 &&
+                    coastDeviationKm <= 0.01 &&
+                    clips.All(item => !item.SourceSeedCovered || item.RebuiltSeedCovered),
+                topologyValidationFailureReasons = BuildTopologyValidationFailureReasons(
+                    globalSourceFallback, clips.Count, cells.Length, emptyCells, invalidCells,
+                    territories.Count, build, lostCellAdjacencies.Length, createdCellAdjacencies.Length,
+                    territoryAdjacencyChanges, rebuiltTerritoryOverlaps.Length,
+                    cellCoverageGaps.Values.Sum(), cellOverlaps.Values.Sum(), coastDeviationKm,
+                    clips.Count(item => item.SourceSeedCovered && !item.RebuiltSeedCovered)),
                 deterministicOrdering = "territories, border keys, cells and adjacency pairs sorted ordinally / by stable id",
                 territoryMetrics,
                 elapsedMilliseconds = methodTimer.ElapsedMilliseconds,
@@ -453,7 +576,7 @@ static partial class GlobalFrontierLab
                 geometrySha256 = sha,
                 artifactSha256 = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text))).ToLowerInvariant()
             };
-            Console.WriteLine($"Reconstructed {method.Key}: cells={clips.Count}, territories={build.Territories.Count}, valid={clips.Count(item => item.Valid)}/{clips.Count}, locally restored borders={locallyRestoredBorders.Count}, source-contour borders={restoredBorders.Count}, robust line noding={build.RobustLineNodingFallback}, global fallback={globalSourceFallback}, {methodTimer.Elapsed.TotalSeconds:F1}s, {new FileInfo(output).Length:N0} bytes.");
+            Console.WriteLine($"Reconstructed {method.Key}: cells={clips.Count}, territories={build.Territories.Count}, valid={clips.Count(item => item.Valid)}/{clips.Count}, locally restored borders={locallyRestoredBorders.Count}, source-contour borders={restoredBorders.Count}, indexed line noding=true, full-union noding fallback={build.FullUnionNodingFallback}, global fallback={globalSourceFallback}, {methodTimer.Elapsed.TotalSeconds:F1}s, {new FileInfo(output).Length:N0} bytes.");
         }
 
         var summary = new
@@ -469,13 +592,24 @@ static partial class GlobalFrontierLab
                 graphSha256 = graphDigest,
                 sourceValidCellCount = sourceValidCells,
                 sourceEmptyCellCount = sourceEmptyCells,
+                sourceInvalidCellCount = cells.Count(cell => !cell.Geometry.IsValid),
+                sourceInvalidCells = sourceInvalidCellDetails,
                 sourceInvalidTerritoryCount = sourceInvalidTerritories,
                 sourceEmptyTerritoryCount = sourceEmptyTerritories,
+                sourceSeedInsideTerritoryCount = sourceSeedAudit.Count(item => item.seedInsideTerritory),
+                sourceSeedOutsideTerritoryCount = sourceSeedAudit.Count(item => !item.seedInsideTerritory),
+                sourceSeedCoveredByCellCount = sourceSeedAudit.Count(item => item.seedCoveredByCell),
+                sourceSeedOutsideCellCount = sourceSeedAudit.Count(item => !item.seedCoveredByCell),
+                sourceSeedInsideTerritoryOutsideCellCount = sourceSeedAudit.Count(item => item.seedInsideTerritory && !item.seedCoveredByCell),
+                sourceSeedAnomalies,
                 sourceLandAreaKm2 = sourceCellUnionArea,
                 sumCellAreaKm2 = sourceCellAreaSum,
                 cellOverlapAreaKm2 = Math.Max(0, sourceCellAreaSum - sourceCellUnionArea),
                 sumTerritoryAreaKm2 = sourceTerritoryAreaSum,
                 territoryOverlapAreaKm2 = Math.Max(0, sourceTerritoryAreaSum - sourceCellUnionArea),
+                sourceTerritoryOverlapPairwiseAreaKm2 = sourceTerritoryOverlaps.Sum(item => item.AreaKm2),
+                sourceTerritoryOverlapPairCount = sourceTerritoryOverlaps.Length,
+                sourceTerritoryOverlaps,
                 landComponentCount = PolygonComponentCount(land),
                 landHoleCount = PolygonHoleCount(land),
                 territoryHoleCount = territories.Values.Sum(value => PolygonHoleCount(value.Geometry)),
@@ -496,7 +630,10 @@ static partial class GlobalFrontierLab
                     seedInsideTerritoryOutsideCell = 0,
                     connectedComponents = 207,
                     coverageWarnings = 0,
-                    auditRun = "Sep 14 territory audit; source graph SHA-256 matches exactly"
+                    auditRun = "Sep 14 territory audit; source graph SHA-256 matches exactly",
+                    currentDirectNtsAuditNote = sourceInvalidCellDetails.Length > 0
+                        ? "The current direct NTS validity check found source cell(s) not reported by the historical audit; current direct metrics and IDs above are authoritative for this reconstruction run."
+                        : "Current direct NTS validity check agrees with the historical empty/invalid-cell counts."
                 } : null,
                 missingDirectCellBoundaryEdgeCount = edgeDiagnostics.Length,
                 missingDirectCellBoundaryEdges = edgeDiagnostics,
@@ -561,7 +698,7 @@ static partial class GlobalFrontierLab
         IReadOnlySet<string> restoredBorders,
         IReadOnlyList<LineString> coast,
         IReadOnlyDictionary<string, TerritorySource> source,
-        bool allowRobustLineNoding = false)
+        bool allowFullUnionNodingFallback = false)
     {
         var nodedCoast = NodeCoastlinesAtBorderEndpoints(coast, borders);
         var linework = new List<Geometry>(nodedCoast.Length + borders.Count * 2);
@@ -581,7 +718,7 @@ static partial class GlobalFrontierLab
         PolygonizationResult? direct = null;
         try
         {
-            Console.WriteLine($"Global reconstruction {method}: polygonizing {linework.Count:N0} shared/coast line components with the pre-noded fast path.");
+            Console.WriteLine($"Global reconstruction {method}: polygonizing {linework.Count:N0} shared/coast line components after indexed robust noding.");
             direct = PolygonizeTerritoryLinework(Factory.CreateGeometryCollection(linework.ToArray()), source, false);
 
             if (direct is not null && direct.MissingTerritoryCount == 0 && direct.InvalidTerritoryCount == 0 &&
@@ -592,28 +729,28 @@ static partial class GlobalFrontierLab
                 var adjacencyChanges = ChangedTerritoryAdjacencies(expectedAdjacencies, directAdjacencies);
                 if (adjacencyChanges.Length == 0)
                 {
-                    Console.WriteLine($"Global reconstruction {method}: pre-noded polygonization accepted; all {expectedAdjacencies.Count} territorial adjacencies preserved.");
+                    Console.WriteLine($"Global reconstruction {method}: indexed-noded polygonization accepted; all {expectedAdjacencies.Count} territorial adjacencies preserved.");
                     return direct;
                 }
-                Console.WriteLine($"Global reconstruction {method}: pre-noded result faces={direct.FaceCount}, adjacency changes={adjacencyChanges.Length}.");
+                Console.WriteLine($"Global reconstruction {method}: indexed-noded result faces={direct.FaceCount}, adjacency changes={adjacencyChanges.Length}.");
             }
             else if (direct is not null)
-                Console.WriteLine($"Global reconstruction {method}: pre-noded result faces={direct.FaceCount}, territories={direct.Territories.Count}/{source.Count}, missing={direct.MissingTerritoryCount}, invalid={direct.InvalidTerritoryCount}, unassigned={direct.UnassignedFaceCount}.");
+                Console.WriteLine($"Global reconstruction {method}: indexed-noded result faces={direct.FaceCount}, territories={direct.Territories.Count}/{source.Count}, missing={direct.MissingTerritoryCount}, invalid={direct.InvalidTerritoryCount}, unassigned={direct.UnassignedFaceCount}.");
         }
         catch (Exception error)
         {
-            Console.WriteLine($"Global reconstruction {method}: pre-noded polygonization raised {error.GetType().Name}.");
+            Console.WriteLine($"Global reconstruction {method}: indexed-noded polygonization raised {error.GetType().Name}.");
         }
 
-        if (!allowRobustLineNoding)
+        if (!allowFullUnionNodingFallback)
         {
             if (direct is not null)
-                Console.WriteLine($"Global reconstruction {method}: returning the measured pre-noded result for local contour recovery; world-wide robust noding is disabled for this pass.");
+                Console.WriteLine($"Global reconstruction {method}: returning the measured indexed-noded result for local contour recovery; full-union noding is disabled for this pass.");
             return direct ?? new PolygonizationResult(new Dictionary<string, Geometry>(StringComparer.Ordinal),
                 0, 0, 0, source.Keys.OrderBy(code => code, StringComparer.Ordinal).ToArray(), Array.Empty<string>());
         }
 
-        Console.WriteLine($"Global reconstruction {method}: robustly noding {linework.Count:N0} line components after local contour recovery.");
+        Console.WriteLine($"Global reconstruction {method}: applying full-union noding to {linework.Count:N0} line components after local contour recovery.");
         Geometry noded;
         try { noded = UnaryUnionOp.Union(linework); }
         catch
@@ -717,10 +854,10 @@ static partial class GlobalFrontierLab
 
     private static PolygonizationResult PolygonizeTerritoryLinework(Geometry linework,
         IReadOnlyDictionary<string, TerritorySource> source,
-        bool robustLineNodingFallback)
+        bool fullUnionNodingFallback)
     {
         var polygonizer = new Polygonizer();
-        polygonizer.Add(linework);
+        polygonizer.Add(NodeLinework(linework));
         var faces = polygonizer.GetPolygons().Cast<Geometry>()
             .Where(face => !face.IsEmpty && face.Area > 1e-14)
             .ToArray();
@@ -784,7 +921,57 @@ static partial class GlobalFrontierLab
         var invalid = output.Where(item => !item.Value.IsValid).Select(item => item.Key)
             .OrderBy(code => code, StringComparer.Ordinal).ToArray();
         return new PolygonizationResult(output, faces.Length, unassigned, excludedWater, missing, invalid,
-            robustLineNodingFallback);
+            fullUnionNodingFallback);
+    }
+
+    private static string[] BuildTopologyValidationFailureReasons(bool globalSourceFallback,
+        int rebuiltCellCount, int sourceCellCount, int emptyCellCount, int invalidCellCount,
+        int sourceTerritoryCount, PolygonizationResult build,
+        int lostCellAdjacencyCount, int createdCellAdjacencyCount,
+        IReadOnlyCollection<string> territoryAdjacencyChanges, int territoryOverlapPairCount,
+        double cellCoverageGapKm2, double cellOverlapKm2, double coastlineDifferenceKm,
+        int lostCoveredSeedCount)
+    {
+        var reasons = new List<string>();
+        if (globalSourceFallback) reasons.Add("global source-mask/cell fallback was used");
+        if (rebuiltCellCount != sourceCellCount) reasons.Add($"cell count changed from {sourceCellCount} to {rebuiltCellCount}");
+        if (emptyCellCount > 0) reasons.Add($"{emptyCellCount} empty cell(s)");
+        if (invalidCellCount > 0) reasons.Add($"{invalidCellCount} invalid cell(s)");
+        if (build.Territories.Count != sourceTerritoryCount)
+            reasons.Add($"territory count changed from {sourceTerritoryCount} to {build.Territories.Count}");
+        if (build.MissingTerritoryCount > 0)
+            reasons.Add($"{build.MissingTerritoryCount} territory polygon(s) missing");
+        if (build.InvalidTerritoryCount > 0) reasons.Add($"{build.InvalidTerritoryCount} invalid territory polygon(s)");
+        if (build.UnassignedFaceCount > 0) reasons.Add($"{build.UnassignedFaceCount} polygon face(s) unassigned");
+        if (lostCellAdjacencyCount > 0) reasons.Add($"{lostCellAdjacencyCount} cell adjacency(ies) lost");
+        if (createdCellAdjacencyCount > 0) reasons.Add($"{createdCellAdjacencyCount} cell adjacency(ies) created");
+        if (territoryAdjacencyChanges.Count > 0) reasons.Add($"{territoryAdjacencyChanges.Count} territory adjacency(ies) changed");
+        if (territoryOverlapPairCount > 0) reasons.Add($"{territoryOverlapPairCount} territory overlap pair(s)");
+        if (cellCoverageGapKm2 > 1e-4) reasons.Add($"cell coverage gaps total {cellCoverageGapKm2:F6} km²");
+        if (cellOverlapKm2 > 1e-4) reasons.Add($"cell overlaps total {cellOverlapKm2:F6} km²");
+        if (coastlineDifferenceKm > 0.01) reasons.Add($"coastline symmetric difference {coastlineDifferenceKm:F3} km");
+        if (lostCoveredSeedCount > 0) reasons.Add($"{lostCoveredSeedCount} previously covered city seed(s) became uncovered");
+        return reasons.ToArray();
+    }
+
+    private static Geometry NodeLinework(Geometry linework)
+    {
+        var strings = EnumerateLines(linework)
+            .Where(line => !line.IsEmpty && line.NumPoints >= 2)
+            .Select(line => (ISegmentString)new NodedSegmentString(
+                line.Coordinates.Select(point => new Coordinate(point)).ToArray(), null!))
+            .ToList();
+        if (strings.Count == 0) return Factory.CreateMultiLineString(Array.Empty<LineString>());
+
+        var intersector = new IntersectionAdder(new RobustLineIntersector());
+        var noder = new MCIndexNoder(intersector);
+        noder.ComputeNodes(strings);
+        var substrings = NodedSegmentString.GetNodedSubstrings(strings);
+        var result = substrings
+            .Select(item => Factory.CreateLineString(item.Coordinates.Select(point => new Coordinate(point)).ToArray()))
+            .Where(line => !line.IsEmpty && line.NumPoints >= 2 && line.Length > 1e-14)
+            .ToArray();
+        return Factory.CreateMultiLineString(result);
     }
 
     private static List<string> GetTerritoryAdjacencies(IReadOnlyDictionary<string, Geometry> territories)
@@ -804,6 +991,35 @@ static partial class GlobalFrontierLab
             catch { }
         }
         return output;
+    }
+
+    private static TerritoryOverlap[] BuildTerritoryOverlapDiagnostics(
+        IReadOnlyDictionary<string, Geometry> territories)
+    {
+        const double reportAreaThresholdKm2 = 1e-6;
+        var values = territories.OrderBy(item => item.Key, StringComparer.Ordinal).ToArray();
+        var index = new STRtree<int>();
+        for (var i = 0; i < values.Length; i++)
+            if (!values[i].Value.IsEmpty) index.Insert(values[i].Value.EnvelopeInternal, i);
+        index.Build();
+
+        var output = new List<TerritoryOverlap>();
+        for (var i = 0; i < values.Length; i++)
+        {
+            if (values[i].Value.IsEmpty) continue;
+            foreach (var j in index.Query(values[i].Value.EnvelopeInternal))
+            {
+                if (j <= i) continue;
+                var overlap = SafeIntersection(values[i].Value, values[j].Value);
+                var areaKm2 = SphericalAreaKm2(overlap);
+                if (areaKm2 <= reportAreaThresholdKm2) continue;
+                output.Add(new TerritoryOverlap(values[i].Key, values[j].Key, areaKm2));
+            }
+        }
+        return output.OrderByDescending(item => item.AreaKm2)
+            .ThenBy(item => item.A, StringComparer.Ordinal)
+            .ThenBy(item => item.B, StringComparer.Ordinal)
+            .ToArray();
     }
 
     private static HashSet<string> FindEmptyClipTerritories(Cell[] cells,

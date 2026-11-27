@@ -23,6 +23,30 @@ async function main() {
     'global-frontier-reconstruction-protected.geojson'
   ]) assert.ok(fs.existsSync(path.join(root, file)), `Missing preview file ${file}`);
 
+  const graph = JSON.parse(fs.readFileSync(path.join(root, 'voronoi-graph.json'), 'utf8'));
+  const reconstruction = JSON.parse(fs.readFileSync(path.join(root, 'global-frontier-reconstruction-summary.json'), 'utf8'));
+  assert.equal(graph.cells.length, reconstruction.source.cellCount, 'Source graph and reconstruction summary must agree on cell count');
+  for (const method of ['adaptive', 'ref40', 'ref85', 'protected']) {
+    const collection = JSON.parse(fs.readFileSync(path.join(root, `global-frontier-reconstruction-${method}.geojson`), 'utf8'));
+    assert.equal(collection.metadata.method, method, `${method} output must identify its method`);
+    assert.equal(typeof collection.metadata.topologyValidated, 'boolean', `${method} must publish its topology status`);
+    assert.equal(collection.features.length, graph.cells.length, `${method} must preserve every source city cell`);
+    assert.equal(new Set(collection.features.map(feature => feature.properties.id)).size, graph.cells.length,
+      `${method} must preserve unique city identifiers`);
+    assert.ok(collection.features.every(feature =>
+      ['Polygon', 'MultiPolygon'].includes(feature.geometry?.type) && feature.geometry.coordinates?.length > 0),
+    `${method} output must contain non-empty polygonal cells`);
+    if (collection.metadata.globalSourceContourFallback) {
+      assert.equal(collection.metadata.sourceMaskCellFallbackCount, graph.cells.length,
+        `${method} source fallback count must be explicit`);
+      assert.notEqual(collection.metadata.topologyValidated, true,
+        `${method} source fallback must not be reported as a validated reconstruction`);
+    }
+    if (!collection.metadata.topologyValidated)
+      assert.ok(collection.metadata.topologyValidationFailureReasons.length > 0,
+        `${method} must explain why its topology is not validated`);
+  }
+
   const server = http.createServer((request, response) => {
     const pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
     const file = path.resolve(root, `.${pathname}`);
@@ -38,8 +62,9 @@ async function main() {
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 
-  const browser = await webkit.launch({ headless: true });
+  let browser;
   try {
+    browser = await webkit.launch({ headless: true });
     const context = await browser.newContext({ ...devices['iPhone 13'], locale: 'fr-FR' });
     const page = await context.newPage();
     const errors = [];
@@ -59,17 +84,19 @@ async function main() {
 
     await page.locator('#reconstruct').scrollIntoViewIfNeeded();
     await page.locator('#reconstruct').click();
-    await page.waitForFunction(() => document.querySelector('#status')?.textContent.includes('Carte reconstruite adaptive'));
+    await page.waitForFunction(() => document.querySelector('#status')?.textContent.includes('Cellules adaptive'));
     assert.match(await page.locator('#details').innerText(), /9.?895 cellules/);
+    assert.match(await page.locator('#details').innerText(), /Reconstruction non validée|Contrôles topologiques réussis/);
     assert.equal(await page.locator('#reconstruct').getAttribute('aria-pressed'), 'true');
     for (const method of ['adaptive', 'ref40', 'ref85', 'protected']) {
       if (method !== 'adaptive') await page.locator(`#${method}`).click();
-      await page.waitForFunction(expected => document.querySelector('#status')?.textContent.includes(`Carte reconstruite ${expected}`), method);
+      await page.waitForFunction(expected => document.querySelector('#status')?.textContent.includes(`Cellules ${expected}`), method);
       assert.match(await page.locator('#status').innerText(), /9.?895 cellules/);
-      assert.match(await page.locator('#details').innerText(), /Monde reconstruit/);
+      assert.match(await page.locator('#status').innerText(), /repli source|topologie non validée|topologie validée/);
+      assert.match(await page.locator('#details').innerText(), /Cellules expérimentales/);
     }
     await page.locator('#adaptive').click();
-    await page.waitForFunction(() => document.querySelector('#status')?.textContent.includes('Carte reconstruite adaptive'));
+    await page.waitForFunction(() => document.querySelector('#status')?.textContent.includes('Cellules adaptive'));
 
     await page.locator('#plus').click();
     await page.locator('#minus').click();
@@ -98,7 +125,7 @@ async function main() {
     await context.close();
     process.stdout.write('Playwright WebKit mobile passed: original map, four modes, adaptive reconstructed cells, anomaly list, zoom controls, pan/pinch pointer handlers, and no page errors.\n');
   } finally {
-    await browser.close();
+    if (browser) await browser.close();
     await new Promise(resolve => server.close(resolve));
   }
 }
