@@ -3,17 +3,20 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using NetTopologySuite.Geometries;
+using NetTopologySuite.Geometries.Utilities;
 using NetTopologySuite.Index.Strtree;
 using NetTopologySuite.Operation.Distance;
 using NetTopologySuite.Operation.Overlay;
 using NetTopologySuite.Operation.OverlayNG;
 using NetTopologySuite.Operation.Polygonize;
 using NetTopologySuite.Operation.Union;
+using NetTopologySuite.Precision;
 
 static partial class GlobalFrontierLab
 {
     private static long _robustIntersectionFallbackCount;
     private static long _robustDifferenceFallbackCount;
+    private static long _precisionReducedOverlayFallbackCount;
 
     private sealed record TerritorySource(string Code, string Owner, Cell[] Cells, Geometry Geometry);
     private sealed record TerritoryBorder(string Key, string A, string B, string OwnerA, string OwnerB,
@@ -68,22 +71,22 @@ static partial class GlobalFrontierLab
         if (BuildTerritoryBorders(corner).Count != 0)
             throw new InvalidOperationException("Reconstruction self-test failed: point-only contact was counted as a shared border.");
 
-        var nearCoincidentA = Factory.CreatePolygon(new[]
+        var microSegmentA = Factory.CreatePolygon(new[]
         {
-            new Coordinate(13.13644, 48.29106),
-            new Coordinate(13.24100567376384, 48.30323949609299),
-            new Coordinate(13.5, 48.30), new Coordinate(13.5, 48.60),
-            new Coordinate(13.13644, 48.60), new Coordinate(13.13644, 48.29106)
+            new Coordinate(9.4, 4.0),
+            new Coordinate(9.45289060135816, 4.07696919910027),
+            new Coordinate(9.45289060135816, 4.076969199100268),
+            new Coordinate(9.6, 4.2), new Coordinate(9.6, 4.5),
+            new Coordinate(9.4, 4.5), new Coordinate(9.4, 4.0)
         });
-        var nearCoincidentB = Factory.CreatePolygon(new[]
+        var microSegmentB = Factory.CreatePolygon(new[]
         {
-            new Coordinate(13.24100567376384, 48.30323949609299),
-            new Coordinate(13.24101, 48.30324), new Coordinate(13.30, 48.40),
-            new Coordinate(13.20, 48.40), new Coordinate(13.24100567376384, 48.30323949609299)
+            new Coordinate(9.45, 4.05), new Coordinate(9.7, 4.05),
+            new Coordinate(9.7, 4.3), new Coordinate(9.45, 4.3), new Coordinate(9.45, 4.05)
         });
-        var robustDifference = SafeDifference(nearCoincidentA, nearCoincidentB);
+        var robustDifference = OverlayAfterPrecisionReduction(microSegmentA, microSegmentB, SpatialFunction.Difference);
         if (robustDifference.IsEmpty || !robustDifference.IsValid)
-            throw new InvalidOperationException("Reconstruction self-test failed: a near-coincident micro-segment difference was not resolved as a valid polygon.");
+            throw new InvalidOperationException("Reconstruction self-test failed: a near-zero edge difference was not resolved as a valid polygon.");
     }
 
     private static async Task GenerateReconstructionAsync(string outDir, Cell[] cells, Edge[] edges)
@@ -137,6 +140,7 @@ static partial class GlobalFrontierLab
             var methodTimer = Stopwatch.StartNew();
             var robustIntersectionStart = System.Threading.Interlocked.Read(ref _robustIntersectionFallbackCount);
             var robustDifferenceStart = System.Threading.Interlocked.Read(ref _robustDifferenceFallbackCount);
+            var precisionReducedStart = System.Threading.Interlocked.Read(ref _precisionReducedOverlayFallbackCount);
             var sourceLines = borders.ToDictionary(border => border.Key, border => border.SourceLines,
                 StringComparer.Ordinal);
             var restoredBorders = new HashSet<string>(StringComparer.Ordinal);
@@ -360,6 +364,7 @@ static partial class GlobalFrontierLab
                 elapsedMilliseconds = methodTimer.ElapsedMilliseconds,
                 robustIntersectionFallbackCount = System.Threading.Interlocked.Read(ref _robustIntersectionFallbackCount) - robustIntersectionStart,
                 robustDifferenceFallbackCount = System.Threading.Interlocked.Read(ref _robustDifferenceFallbackCount) - robustDifferenceStart,
+                precisionReducedOverlayFallbackCount = System.Threading.Interlocked.Read(ref _precisionReducedOverlayFallbackCount) - precisionReducedStart,
                 peakWorkingSetBytes = Process.GetCurrentProcess().PeakWorkingSet64
             };
 
@@ -707,7 +712,8 @@ static partial class GlobalFrontierLab
         catch
         {
             System.Threading.Interlocked.Increment(ref _robustIntersectionFallbackCount);
-            return OverlayNGRobust.Overlay(a, b, SpatialFunction.Intersection);
+            try { return OverlayNGRobust.Overlay(a, b, SpatialFunction.Intersection); }
+            catch { return OverlayAfterPrecisionReduction(a, b, SpatialFunction.Intersection); }
         }
     }
 
@@ -717,8 +723,35 @@ static partial class GlobalFrontierLab
         catch
         {
             System.Threading.Interlocked.Increment(ref _robustDifferenceFallbackCount);
-            return OverlayNGRobust.Overlay(a, b, SpatialFunction.Difference);
+            try { return OverlayNGRobust.Overlay(a, b, SpatialFunction.Difference); }
+            catch { return OverlayAfterPrecisionReduction(a, b, SpatialFunction.Difference); }
         }
+    }
+
+    private static Geometry OverlayAfterPrecisionReduction(Geometry a, Geometry b, SpatialFunction operation)
+    {
+        System.Threading.Interlocked.Increment(ref _precisionReducedOverlayFallbackCount);
+        Exception? lastError = null;
+        // Remove sub-micrometre duplicate edges first; only broaden the grid if
+        // the robust overlay still cannot node the repaired contours.
+        foreach (var scale in new[] { 1e12, 1e10, 1e9 })
+        {
+            try
+            {
+                var precision = new PrecisionModel(scale);
+                var repairedA = GeometryPrecisionReducer.Reduce(GeometryFixer.Fix(a), precision);
+                var repairedB = GeometryPrecisionReducer.Reduce(GeometryFixer.Fix(b), precision);
+                var result = OverlayNGRobust.Overlay(repairedA, repairedB, operation);
+                if (!result.IsValid)
+                    throw new InvalidOperationException($"Precision-reduced {operation} returned invalid geometry at scale {scale:G}.");
+                return result;
+            }
+            catch (Exception error)
+            {
+                lastError = error;
+            }
+        }
+        throw new InvalidOperationException("The geometry overlay remained invalid after robust noding and three topology-preserving precision retries.", lastError);
     }
 
     private static double FaceOverlapArea(Geometry face, Geometry territory)
