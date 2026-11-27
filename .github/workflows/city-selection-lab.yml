@@ -9,12 +9,16 @@ on:
       - '.github/workflows/city-selection-lab.yml'
       - 'docs/hybrid-frontier-lab.html'
       - 'docs/c4-boundary-node-chain-lab.html'
+      - 'docs/global-frontier-lab.html'
+      - 'docs/global-frontier-audit.md'
   pull_request:
     paths:
       - 'tools/CitySelection/**'
       - '.github/workflows/city-selection-lab.yml'
       - 'docs/hybrid-frontier-lab.html'
       - 'docs/c4-boundary-node-chain-lab.html'
+      - 'docs/global-frontier-lab.html'
+      - 'docs/global-frontier-audit.md'
   workflow_dispatch:
 
 permissions:
@@ -27,7 +31,7 @@ concurrency:
 jobs:
   run-lab:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,6 +45,7 @@ jobs:
         run: |
           c4_only=false
           frontier_only=false
+          global_only=false
           if [[ "${{ github.event_name }}" == "pull_request" || "${{ github.event_name }}" == "push" ]]; then
             changed="$(git diff --name-only HEAD^ HEAD)"
             echo "Changed in ${{ github.event_name }}:"
@@ -49,12 +54,28 @@ jobs:
               c4_only=true
             elif [[ -n "$changed" ]] && ! echo "$changed" | grep -Ev '^(tools/CitySelection/(AdaptiveHybridFrontierLab|HybridFrontierLab)\.cs|docs/hybrid-frontier-lab\.html|\.github/workflows/city-selection-lab\.yml)$' >/dev/null; then
               frontier_only=true
+            elif [[ -n "$changed" ]] && ! echo "$changed" | grep -Ev '^(tools/CitySelection/(GlobalFrontierLab|GlobalFrontierReconstruction|VoronoiLab|Program)\.cs|tools/CitySelection/global-frontier-mobile\.test\.cjs|docs/global-frontier-lab\.html|docs/global-frontier-audit\.md|\.github/workflows/city-selection-lab\.yml)$' >/dev/null; then
+              global_only=true
             fi
           fi
           echo "c4_only=$c4_only" >> "$GITHUB_OUTPUT"
           echo "frontier_only=$frontier_only" >> "$GITHUB_OUTPUT"
+          echo "global_only=$global_only" >> "$GITHUB_OUTPUT"
           echo "C4-only mode: $c4_only"
           echo "Frontier-only mode: $frontier_only"
+      - name: Validate global viewer JavaScript
+        if: steps.scope.outputs.global_only == 'true'
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          html = Path("docs/global-frontier-lab.html").read_text()
+          scripts = re.findall(r"<script>([\s\S]*?)</script>", html)
+          if len(scripts) != 1:
+              raise SystemExit(f"Expected one inline viewer script, found {len(scripts)}")
+          Path("/tmp/global-frontier-lab.js").write_text(scripts[0])
+          PY
+          node --check /tmp/global-frontier-lab.js
       - name: Build
         run: dotnet build tools/CitySelection/CitySelection.csproj --configuration Release
       - name: Run C4 boundary-node experiment only
@@ -63,11 +84,14 @@ jobs:
       - name: Run frontier experiments only
         if: steps.scope.outputs.c4_only != 'true' && steps.scope.outputs.frontier_only == 'true'
         run: dotnet run --project tools/CitySelection/CitySelection.csproj --configuration Release -- --frontier-only
+      - name: Run global frontier screening and reconstruction
+        if: steps.scope.outputs.global_only == 'true'
+        run: dotnet run --project tools/CitySelection/CitySelection.csproj --configuration Release -- --global-frontier-only
       - name: Run full city-selection experiments
-        if: steps.scope.outputs.c4_only != 'true' && steps.scope.outputs.frontier_only != 'true'
+        if: steps.scope.outputs.c4_only != 'true' && steps.scope.outputs.frontier_only != 'true' && steps.scope.outputs.global_only != 'true'
         run: dotnet run --project tools/CitySelection/CitySelection.csproj --configuration Release
       - name: Show report
-        if: steps.scope.outputs.c4_only != 'true' && steps.scope.outputs.frontier_only != 'true'
+        if: steps.scope.outputs.c4_only != 'true' && steps.scope.outputs.frontier_only != 'true' && steps.scope.outputs.global_only != 'true'
         run: cat data/generated/city-selection/report.md
       - name: Prepare C4 preview
         if: always() && github.event_name == 'pull_request' && steps.scope.outputs.c4_only == 'true'
@@ -81,12 +105,34 @@ jobs:
           mkdir -p data/generated/frontier-preview
           cp docs/hybrid-frontier-lab.html data/generated/frontier-preview/index.html
           cp data/generated/city-selection/hybrid-frontier-lab.json data/generated/frontier-preview/hybrid-frontier-lab.json
+      - name: Prepare global frontier preview
+        if: always() && github.event_name == 'pull_request' && steps.scope.outputs.global_only == 'true'
+        run: |
+          mkdir -p data/generated/global-frontier-preview
+          cp docs/global-frontier-lab.html data/generated/global-frontier-preview/index.html
+          cp docs/voronoi-graph.json data/generated/global-frontier-preview/voronoi-graph.json
+          test -f data/generated/city-selection/global-frontier-results.json && cp data/generated/city-selection/global-frontier-results.json data/generated/global-frontier-preview/global-frontier-results.json || true
+          test -f data/generated/city-selection/global-frontier-reconstruction-summary.json && cp data/generated/city-selection/global-frontier-reconstruction-summary.json data/generated/global-frontier-preview/global-frontier-reconstruction-summary.json || true
+          cp data/generated/city-selection/global-frontier-reconstruction-*.geojson data/generated/global-frontier-preview/ 2>/dev/null || true
+      - name: Test global viewer on Playwright WebKit mobile
+        if: success() && github.event_name == 'pull_request' && steps.scope.outputs.global_only == 'true'
+        run: |
+          npm install --prefix /tmp/wc-playwright playwright
+          /tmp/wc-playwright/node_modules/.bin/playwright install --with-deps webkit
+          NODE_PATH=/tmp/wc-playwright/node_modules node tools/CitySelection/global-frontier-mobile.test.cjs
       - name: Upload frontier preview
         if: always() && github.event_name == 'pull_request' && (steps.scope.outputs.c4_only == 'true' || steps.scope.outputs.frontier_only == 'true')
         uses: actions/upload-artifact@v4
         with:
           name: frontier-preview
           path: data/generated/frontier-preview/
+          if-no-files-found: error
+      - name: Upload global frontier preview
+        if: always() && github.event_name == 'pull_request' && steps.scope.outputs.global_only == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: global-frontier-preview
+          path: data/generated/global-frontier-preview/
           if-no-files-found: error
       - name: Publish generated C4 lab to docs
         if: github.event_name != 'pull_request' && steps.scope.outputs.c4_only == 'true'
@@ -115,7 +161,7 @@ jobs:
             git push
           fi
       - name: Publish generated frontier viewer to docs
-        if: github.event_name != 'pull_request' && steps.scope.outputs.c4_only != 'true' && steps.scope.outputs.frontier_only != 'true'
+        if: github.event_name != 'pull_request' && steps.scope.outputs.c4_only != 'true' && steps.scope.outputs.frontier_only != 'true' && steps.scope.outputs.global_only != 'true'
         run: |
           cp data/generated/city-selection/frontiers.html docs/frontiers.html
           cp data/generated/city-selection/frontier-graph.json docs/frontier-graph.json
@@ -134,9 +180,11 @@ jobs:
             git push
           fi
       - name: Upload generated selections
-        if: steps.scope.outputs.c4_only != 'true' && steps.scope.outputs.frontier_only != 'true'
+        if: steps.scope.outputs.c4_only != 'true' && steps.scope.outputs.frontier_only != 'true' && steps.scope.outputs.global_only != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: city-selection-results
           path: data/generated/city-selection/
           if-no-files-found: error
+
+

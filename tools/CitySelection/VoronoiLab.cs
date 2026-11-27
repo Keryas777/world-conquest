@@ -3,7 +3,9 @@ using System.Globalization;
 using System.IO.Compression;
 using System.Text.Json;
 using NetTopologySuite.Geometries;
+using NetTopologySuite.Geometries.Utilities;
 using NetTopologySuite.Operation.Union;
+using NetTopologySuite.Triangulate;
 
 static class VoronoiLab
 {
@@ -54,6 +56,79 @@ static class VoronoiLab
             ["TW"] = new[] { "Taiwan" },
             ["XK"] = new[] { "Kosovo" }
         };
+
+    // Build the same territory-local planar Voronoi cells as the production
+    // experiment, but use NTS's Delaunay-backed builder instead of clipping
+    // every site against every other site (quadratic in the number of cities).
+    // The returned polygons are uncut by territory borders; callers clip each
+    // one against the newly reconstructed mask.
+    public static Dictionary<long, Geometry> BuildRawWorldCells(
+        IReadOnlyDictionary<string, List<City>> selected,
+        IReadOnlyDictionary<string, Geometry> territoryMasks)
+    {
+        var cities = selected.OrderBy(item => item.Key, StringComparer.Ordinal)
+            .SelectMany(item => item.Value.OrderBy(city => city.Id)).ToArray();
+        if (cities.Length == 0) return new Dictionary<long, Geometry>();
+        var referenceLat = cities.Average(city => city.Lat) * Math.PI / 180.0;
+        var cosLat = Math.Cos(referenceLat);
+        var output = new Dictionary<long, Geometry>(cities.Length);
+
+        foreach (var (territoryCode, territoryCities) in selected.OrderBy(item => item.Key, StringComparer.Ordinal))
+        {
+            if (!territoryMasks.TryGetValue(territoryCode, out var territory))
+                throw new InvalidOperationException($"Missing reconstructed territory mask for {territoryCode}.");
+            var orderedCities = territoryCities.OrderBy(city => city.Id).ToArray();
+            var sites = new List<Coordinate>(orderedCities.Length);
+            var idBySite = new Dictionary<string, long>(StringComparer.Ordinal);
+            foreach (var city in orderedCities)
+            {
+                var site = new Coordinate(city.Lon * cosLat, city.Lat);
+                var key = SiteKey(site);
+                if (!idBySite.TryAdd(key, city.Id))
+                    throw new InvalidOperationException($"Two selected cities in territory {territoryCode} share the same Voronoi site {key}.");
+                sites.Add(site);
+            }
+            var envelope = territory.EnvelopeInternal;
+            var minX = envelope.MinX * cosLat - .5;
+            var maxX = envelope.MaxX * cosLat + .5;
+            var minY = envelope.MinY - .5;
+            var maxY = envelope.MaxY + .5;
+
+            if (orderedCities.Length == 1)
+            {
+                var rectangle = GeometryFactory.CreatePolygon(new[]
+                {
+                    new Coordinate(minX, minY), new Coordinate(maxX, minY),
+                    new Coordinate(maxX, maxY), new Coordinate(minX, maxY),
+                    new Coordinate(minX, minY)
+                });
+                output[orderedCities[0].Id] = AffineTransformation.ScaleInstance(1.0 / cosLat, 1.0).Transform(rectangle);
+                continue;
+            }
+
+            var builder = new VoronoiDiagramBuilder
+            {
+                ClipEnvelope = new Envelope(minX, maxX, minY, maxY),
+                Tolerance = 0.0
+            };
+            builder.SetSites(sites);
+            var diagram = builder.GetDiagram(GeometryFactory);
+            for (var i = 0; i < diagram.NumGeometries; i++)
+            {
+                var face = diagram.GetGeometryN(i);
+                if (face.UserData is not Coordinate site || !idBySite.TryGetValue(SiteKey(site), out var id))
+                    throw new InvalidOperationException($"Voronoi builder returned an unrecognized site in territory {territoryCode}.");
+                Geometry rawCell = AffineTransformation.ScaleInstance(1.0 / cosLat, 1.0).Transform(face);
+                if (!rawCell.IsValid) rawCell = rawCell.Buffer(0);
+                output[id] = rawCell;
+            }
+            if (orderedCities.Any(city => !output.ContainsKey(city.Id)))
+                throw new InvalidOperationException($"Voronoi builder returned {diagram.NumGeometries} cells for {orderedCities.Length} cities in territory {territoryCode}.");
+        }
+        return output;
+    }
+
+    static string SiteKey(Coordinate site) => $"{Math.Round(site.X, 9):F9}|{Math.Round(site.Y, 9):F9}";
 
     public static async Task GenerateWorldAsync(
         HttpClient http,
@@ -1168,3 +1243,4 @@ static class VoronoiLab
         return cities;
     }
 }
+

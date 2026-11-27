@@ -70,6 +70,25 @@ static class Program
         var outDir = Path.Combine("data", "generated", "city-selection");
         Directory.CreateDirectory(outDir);
 
+        if (args.Contains("--global-frontier-self-test", StringComparer.OrdinalIgnoreCase))
+        {
+            GlobalFrontierLab.RunSelfTests();
+            return;
+        }
+
+        if (args.Contains("--global-frontier-only", StringComparer.OrdinalIgnoreCase))
+        {
+            var publishedGraph = Path.Combine("docs", "voronoi-graph.json");
+            var localGraph = Path.Combine(outDir, "voronoi-graph.json");
+            if (!File.Exists(publishedGraph))
+                throw new FileNotFoundException("Global frontier screening requires docs/voronoi-graph.json.", publishedGraph);
+
+            File.Copy(publishedGraph, localGraph, overwrite: true);
+            GlobalFrontierLab.RunSelfTests();
+            await GlobalFrontierLab.GenerateAsync(outDir);
+            return;
+        }
+
         if (args.Contains("--c4-only", StringComparer.OrdinalIgnoreCase))
         {
             var publishedGraph = Path.Combine("docs", "voronoi-graph.json");
@@ -124,3 +143,4 @@ static class Program
         Console.WriteLine($"Outputs written to {outDir}");
     }
 }
+
