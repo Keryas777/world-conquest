@@ -581,14 +581,16 @@ static partial class GlobalFrontierLab
         for (var i = 0; i < coast.Count; i++) index.Insert(coast[i].EnvelopeInternal, i);
         index.Build();
         var inserts = coast.Select(_ => new Dictionary<int, List<(double T, Coordinate Point)>>()).ToArray();
+        var nodeKeys = coast.Select(_ => new HashSet<string>(StringComparer.Ordinal)).ToArray();
         var seen = new HashSet<string>(StringComparer.Ordinal);
+        string CoordinateKey(Coordinate coordinate) =>
+            $"{Math.Round(coordinate.X, 12):F12}|{Math.Round(coordinate.Y, 12):F12}";
 
         foreach (var border in borders)
         foreach (var line in border.SourceLines)
         foreach (var endpoint in new[] { line.GetCoordinateN(0), line.GetCoordinateN(line.NumPoints - 1) })
         {
-            var key = $"{Math.Round(endpoint.X, 12):F12}|{Math.Round(endpoint.Y, 12):F12}";
-            if (!seen.Add(key)) continue;
+            if (!seen.Add(CoordinateKey(endpoint))) continue;
             var point = Factory.CreatePoint(endpoint);
             var envelope = new Envelope(endpoint);
             envelope.ExpandBy(exactContactToleranceDegrees);
@@ -598,7 +600,8 @@ static partial class GlobalFrontierLab
                 var nearest = DistanceOp.NearestPoints(point, coastline);
                 if (nearest.Length < 2 || nearest[0].Distance(nearest[1]) > exactContactToleranceDegrees) continue;
                 var coordinates = coastline.Coordinates;
-                if (coordinates.Any(coordinate => coordinate.Distance(endpoint) <= exactContactToleranceDegrees)) break;
+                nodeKeys[coastIndex].Add(CoordinateKey(endpoint));
+                if (coordinates.Any(coordinate => coordinate.Distance(endpoint) <= exactContactToleranceDegrees)) continue;
 
                 var bestDistance = double.PositiveInfinity;
                 var bestSegment = -1;
@@ -620,22 +623,21 @@ static partial class GlobalFrontierLab
                     bestSegment = segment;
                     bestT = t;
                 }
-                if (bestSegment < 0 || bestT <= 1e-12 || bestT >= 1.0 - 1e-12 || bestDistance > exactContactToleranceDegrees) break;
+                if (bestSegment < 0 || bestT <= 1e-12 || bestT >= 1.0 - 1e-12 || bestDistance > exactContactToleranceDegrees) continue;
                 if (!inserts[coastIndex].TryGetValue(bestSegment, out var points))
                     inserts[coastIndex][bestSegment] = points = new List<(double T, Coordinate Point)>();
-                if (points.Any(item => item.Point.Distance(endpoint) <= exactContactToleranceDegrees)) break;
-                points.Add((bestT, new Coordinate(endpoint)));
-                break;
+                if (!points.Any(item => item.Point.Distance(endpoint) <= exactContactToleranceDegrees))
+                    points.Add((bestT, new Coordinate(endpoint)));
             }
         }
 
-        var output = new LineString[coast.Count];
+        var output = new List<LineString>(coast.Count + seen.Count);
         for (var lineIndex = 0; lineIndex < coast.Count; lineIndex++)
         {
             var line = coast[lineIndex];
-            if (inserts[lineIndex].Count == 0)
+            if (inserts[lineIndex].Count == 0 && nodeKeys[lineIndex].Count == 0)
             {
-                output[lineIndex] = (LineString)line.Copy();
+                output.Add((LineString)line.Copy());
                 continue;
             }
             var coordinates = line.Coordinates;
@@ -647,9 +649,19 @@ static partial class GlobalFrontierLab
                 rebuilt.AddRange(points.OrderBy(item => item.T).Select(item => item.Point));
             }
             rebuilt.Add(new Coordinate(coordinates[^1]));
-            output[lineIndex] = Factory.CreateLineString(rebuilt.ToArray());
+
+            var chunkStart = 0;
+            for (var coordinateIndex = 1; coordinateIndex < rebuilt.Count; coordinateIndex++)
+            {
+                if (!nodeKeys[lineIndex].Contains(CoordinateKey(rebuilt[coordinateIndex]))) continue;
+                if (coordinateIndex > chunkStart)
+                    output.Add(Factory.CreateLineString(rebuilt.Skip(chunkStart).Take(coordinateIndex - chunkStart + 1).ToArray()));
+                chunkStart = coordinateIndex;
+            }
+            if (chunkStart < rebuilt.Count - 1)
+                output.Add(Factory.CreateLineString(rebuilt.Skip(chunkStart).ToArray()));
         }
-        return output;
+        return output.ToArray();
     }
 
     private static PolygonizationResult PolygonizeTerritoryLinework(Geometry linework,
